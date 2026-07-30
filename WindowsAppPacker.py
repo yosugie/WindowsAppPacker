@@ -329,7 +329,7 @@ class MessageDialog(ctk.CTkToplevel):
             hover_color=colors["accent_hover"],
             text_color=colors["accent_text"],
         )
-        ok_btn.grid(row=2, column=0, pady=(0, 24))
+        ok_btn.grid(row=1, column=0, pady=(0, 24))
 
         self.update_idletasks()
         x = master.winfo_rootx() + (master.winfo_width() - self.winfo_width()) // 2
