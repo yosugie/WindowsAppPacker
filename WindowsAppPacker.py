@@ -583,7 +583,7 @@ class App(ctk.CTk):
 
         self.hide_console_var = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(
-            options_row, text="Скрыть окно консоли (GUI-приложение)", variable=self.hide_console_var
+            options_row, text="Скрыть окно консоли", variable=self.hide_console_var
         ).grid(row=0, column=2, padx=(0, 20))
 
         self.admin_var = ctk.BooleanVar(value=False)
