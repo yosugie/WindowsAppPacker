@@ -63,8 +63,8 @@ THEMES = {
         border="#2a2b33",
         text="#e6e6ea",
         muted="#8b8d98",
-        accent="#3b82f6",
-        accent_hover="#2563eb",
+        accent="#0b63f6",
+        accent_hover="#3c82f8",
         accent_text="#ffffff",
         danger="#e5484d",
         danger_hover="#c93d41",
@@ -226,7 +226,7 @@ class FilePathRow(ctk.CTkFrame):
         self.entry.grid(row=0, column=1, sticky="ew")
         self.entry.bind("<KeyRelease>", lambda _e: self._notify())
 
-        self.browse_btn = ctk.CTkButton(self, text="Обзор...", width=90, command=self._browse)
+        self.browse_btn = ctk.CTkButton(self, text="Обзор...", width=90, command=self._browse, corner_radius=10)
         self.browse_btn.grid(row=0, column=2, padx=(8, 0))
 
         if DND_AVAILABLE:
@@ -372,15 +372,6 @@ class App(ctk.CTk):
                 widget.configure(
                     fg_color=c["accent"], hover_color=c["accent_hover"], border_color=c["border"], text_color=c["text"]
                 )
-            elif kind == "segmented":
-                widget.configure(
-                    fg_color=c["input"],
-                    selected_color=c["accent"],
-                    selected_hover_color=c["accent_hover"],
-                    unselected_color=c["input"],
-                    unselected_hover_color=c["border"],
-                    text_color=c["text"],
-                )
             elif kind == "accent_button":
                 widget.configure(fg_color=c["accent"], hover_color=c["accent_hover"], text_color=c["accent_text"])
             elif kind == "danger_button":
@@ -392,31 +383,17 @@ class App(ctk.CTk):
             elif kind in ("file_row", "log_console"):
                 widget.apply_theme(c)
 
-    def _on_theme_change(self, value: str) -> None:
+    def _toggle_theme(self) -> None:
         # Note: deliberately not calling ctk.set_appearance_mode() here — it
         # broadcasts to every CTk widget in the app and forces a full redraw,
         # which looks like the window restarting. Recoloring through the
         # registry above is enough since every color is set explicitly.
-        new_theme = "dark" if value == "Тёмная" else "light"
-        if new_theme == self.theme:
-            return  # segmented button fires even when reselecting the active value
-        self.theme = new_theme
+        self.theme = "light" if self.theme == "dark" else "dark"
         self.colors = THEMES[self.theme]
+        self.theme_toggle_btn.configure(text="Тёмная" if self.theme == "dark" else "Светлая")
         self._apply_theme()
 
     # ------------------------------------------------------------------ UI
-
-    def _make_segmented(self, parent, values: List[str], variable, command=None) -> ctk.CTkSegmentedButton:
-        seg = ctk.CTkSegmentedButton(
-            parent,
-            values=values,
-            variable=variable,
-            command=command,
-            height=36,
-            corner_radius=10,
-            font=ctk.CTkFont(size=13, weight="bold"),
-        )
-        return self._reg(seg, "segmented")
 
     def _card(self, parent, title: str) -> ctk.CTkFrame:
         card = ctk.CTkFrame(parent, corner_radius=16, border_width=1)
@@ -440,10 +417,11 @@ class App(ctk.CTk):
         self._reg(theme_label, "label")
         theme_label.grid(row=0, column=2, padx=(0, 8))
 
-        self.theme_var = ctk.StringVar(value="Тёмная")
-        self._make_segmented(
-            topbar, ["Тёмная", "Светлая"], self.theme_var, command=self._on_theme_change
-        ).grid(row=0, column=3)
+        self.theme_toggle_btn = ctk.CTkButton(
+            topbar, text="Тёмная", command=self._toggle_theme, height=32, width=100, corner_radius=10
+        )
+        self._reg(self.theme_toggle_btn, "accent_button")
+        self.theme_toggle_btn.grid(row=0, column=3)
 
     def _build_content(self) -> None:
         wrapper = ctk.CTkFrame(self, fg_color="transparent")
@@ -507,7 +485,7 @@ class App(ctk.CTk):
         admin_cb.grid(row=0, column=1)
 
         self.clear_general_btn = ctk.CTkButton(
-            options_row, text="Очистить", command=self._clear_general, height=32, width=110
+            options_row, text="Очистить", command=self._clear_general, height=32, width=110, corner_radius=10
         )
         self._reg(self.clear_general_btn, "danger_button")
         self.clear_general_btn.grid(row=0, column=2, sticky="e")
@@ -517,12 +495,20 @@ class App(ctk.CTk):
         action_bar.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 10))
         action_bar.grid_columnconfigure(2, weight=1)
 
-        self.build_btn = ctk.CTkButton(action_bar, text="Собрать EXE", command=self._start_build, height=36, width=140)
+        self.build_btn = ctk.CTkButton(
+            action_bar, text="Собрать EXE", command=self._start_build, height=36, width=140, corner_radius=10
+        )
         self._reg(self.build_btn, "accent_button")
         self.build_btn.grid(row=0, column=0)
 
         self.cancel_btn = ctk.CTkButton(
-            action_bar, text="Отмена", command=self._cancel_build, height=36, width=100, state="disabled"
+            action_bar,
+            text="Отмена",
+            command=self._cancel_build,
+            height=36,
+            width=100,
+            state="disabled",
+            corner_radius=10,
         )
         self._reg(self.cancel_btn, "danger_button")
         self.cancel_btn.grid(row=0, column=1, padx=(8, 0))
@@ -557,6 +543,7 @@ class App(ctk.CTk):
             command=self._toggle_log,
             width=28,
             height=24,
+            corner_radius=10,
             fg_color="transparent",
         )
         self._reg(self.log_toggle_btn, "log_toggle")
