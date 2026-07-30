@@ -9,7 +9,6 @@
 """
 from __future__ import annotations
 
-import json
 import os
 import queue
 import re
@@ -18,9 +17,8 @@ import subprocess
 import sys
 import tempfile
 import threading
-from dataclasses import dataclass, field, asdict
-from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog
+from dataclasses import dataclass
+from tkinter import filedialog, messagebox
 from typing import Callable, List, Optional, Tuple
 
 import customtkinter as ctk
@@ -33,8 +31,8 @@ except ImportError:  # optional dependency
     DND_FILES = None
     DND_AVAILABLE = False
 
-ctk.set_appearance_mode("system")
-ctk.set_default_color_theme("blue")
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("green")
 
 PY_FILETYPES = [("Python files", "*.py"), ("All files", "*.*")]
 ICO_FILETYPES = [("Icon files", "*.ico"), ("All files", "*.*")]
@@ -43,6 +41,23 @@ DATA_SEP = ";" if os.name == "nt" else ":"
 
 OutputCallback = Callable[[str], None]
 DoneCallback = Callable[[int], None]
+
+# --------------------------------------------------------------------------
+# color palette (dark background + mint-green accent)
+# --------------------------------------------------------------------------
+
+COLOR_BG = "#131316"
+COLOR_CARD = "#1b1c22"
+COLOR_INPUT = "#212228"
+COLOR_BORDER = "#2a2b33"
+COLOR_TEXT = "#e6e6ea"
+COLOR_TEXT_MUTED = "#8b8d98"
+COLOR_ACCENT = "#1fdb7d"
+COLOR_ACCENT_HOVER = "#18b967"
+COLOR_DANGER = "#e5484d"
+COLOR_DANGER_HOVER = "#c93d41"
+
+ENTRY_STYLE = dict(fg_color=COLOR_INPUT, border_color=COLOR_BORDER, text_color=COLOR_TEXT)
 
 
 # --------------------------------------------------------------------------
@@ -61,30 +76,10 @@ class BuildConfig:
     hide_console: bool = True
     admin_rights: bool = False
 
-    # list of (source_path, dest_folder_inside_exe)
-    data_files: List[Tuple[str, str]] = field(default_factory=list)
-
     version: str = "1.0.0.0"
     description: str = ""
     author: str = ""
     product_name: str = ""
-
-    extra_args: str = ""
-
-    def to_dict(self) -> dict:
-        d = asdict(self)
-        d["data_files"] = [list(pair) for pair in self.data_files]
-        return d
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "BuildConfig":
-        cfg = cls()
-        for key, value in data.items():
-            if key == "data_files":
-                value = [tuple(pair) for pair in value]
-            if hasattr(cfg, key):
-                setattr(cfg, key, value)
-        return cfg
 
     def validate(self) -> List[str]:
         errors = []
@@ -95,10 +90,6 @@ class BuildConfig:
 
         if self.icon_path and not self.icon_path.lower().endswith(".ico"):
             errors.append("Иконка должна быть файлом .ico")
-
-        for src, _dest in self.data_files:
-            if not src:
-                errors.append("Пустой путь в списке дополнительных файлов")
         return errors
 
 
@@ -195,13 +186,6 @@ def build_command(cfg: BuildConfig, version_file: Optional[str]) -> List[str]:
     if version_file:
         cmd += ["--version-file", version_file]
 
-    for src, dest in cfg.data_files:
-        dest = dest or "."
-        cmd += ["--add-data", f"{src}{DATA_SEP}{dest}"]
-
-    if cfg.extra_args.strip():
-        cmd += shlex.split(cfg.extra_args)
-
     return cmd
 
 
@@ -275,50 +259,6 @@ class BuildJob:
 
 
 # --------------------------------------------------------------------------
-# core: named build presets (saved as JSON under the user's home directory)
-# --------------------------------------------------------------------------
-
-PRESETS_DIR = Path.home() / ".windowsapppacker" / "presets"
-
-_SAFE_NAME_RE = re.compile(r"[^\w\-. ]+", re.UNICODE)
-
-
-def _slugify(name: str) -> str:
-    return _SAFE_NAME_RE.sub("_", name).strip() or "preset"
-
-
-def _ensure_presets_dir() -> None:
-    PRESETS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def list_presets() -> List[str]:
-    if not PRESETS_DIR.exists():
-        return []
-    return sorted(p.stem for p in PRESETS_DIR.glob("*.json"))
-
-
-def save_preset(name: str, cfg: BuildConfig) -> Path:
-    _ensure_presets_dir()
-    path = PRESETS_DIR / f"{_slugify(name)}.json"
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(cfg.to_dict(), fh, ensure_ascii=False, indent=2)
-    return path
-
-
-def load_preset(name: str) -> BuildConfig:
-    path = PRESETS_DIR / f"{_slugify(name)}.json"
-    with open(path, "r", encoding="utf-8") as fh:
-        data = json.load(fh)
-    return BuildConfig.from_dict(data)
-
-
-def delete_preset(name: str) -> None:
-    path = PRESETS_DIR / f"{_slugify(name)}.json"
-    if path.exists():
-        path.unlink()
-
-
-# --------------------------------------------------------------------------
 # ui: reusable widgets
 # --------------------------------------------------------------------------
 
@@ -342,14 +282,24 @@ class FilePathRow(ctk.CTkFrame):
 
         self.grid_columnconfigure(1, weight=1)
 
-        self.label = ctk.CTkLabel(self, text=label, width=110, anchor="w")
+        self.label = ctk.CTkLabel(self, text=label, width=110, anchor="w", text_color=COLOR_TEXT)
         self.label.grid(row=0, column=0, padx=(0, 8), sticky="w")
 
-        self.entry = ctk.CTkEntry(self, placeholder_text="Перетащите файл сюда или нажмите «Обзор»")
+        self.entry = ctk.CTkEntry(
+            self, placeholder_text="Перетащите файл сюда или нажмите «Обзор»", **ENTRY_STYLE
+        )
         self.entry.grid(row=0, column=1, sticky="ew")
         self.entry.bind("<KeyRelease>", lambda _e: self._notify())
 
-        self.browse_btn = ctk.CTkButton(self, text="Обзор...", width=90, command=self._browse)
+        self.browse_btn = ctk.CTkButton(
+            self,
+            text="Обзор...",
+            width=90,
+            command=self._browse,
+            fg_color=COLOR_INPUT,
+            hover_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
+        )
         self.browse_btn.grid(row=0, column=2, padx=(8, 0))
 
         if DND_AVAILABLE:
@@ -385,97 +335,17 @@ class FilePathRow(ctk.CTkFrame):
         self._notify()
 
 
-class DataFilesPanel(ctk.CTkFrame):
-    """Editable list of (source path -> destination folder inside the EXE)."""
-
-    def __init__(self, master, **kwargs):
-        super().__init__(master, fg_color="transparent", **kwargs)
-        self.grid_columnconfigure(0, weight=1)
-
-        self._entries: List[Tuple[str, str]] = []
-
-        controls = ctk.CTkFrame(self, fg_color="transparent")
-        controls.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        controls.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkButton(controls, text="+ Добавить файл", command=self._add_file).grid(
-            row=0, column=1, padx=(6, 0)
-        )
-        ctk.CTkButton(controls, text="+ Добавить папку", command=self._add_folder).grid(
-            row=0, column=2, padx=(6, 0)
-        )
-        ctk.CTkButton(controls, text="Удалить выбранное", command=self._remove_selected).grid(
-            row=0, column=3, padx=(6, 0)
-        )
-
-        self.list_frame = ctk.CTkScrollableFrame(self, height=140, label_text="Дополнительные файлы/папки")
-        self.list_frame.grid(row=1, column=0, sticky="nsew")
-        self.list_frame.grid_columnconfigure(0, weight=1)
-
-        self._row_widgets = []
-        self._selected_index: Optional[int] = None
-
-    def _add_file(self) -> None:
-        path = filedialog.askopenfilename()
-        if path:
-            self._add_entry(path, ".")
-
-    def _add_folder(self) -> None:
-        path = filedialog.askdirectory()
-        if path:
-            self._add_entry(path, ".")
-
-    def _add_entry(self, src: str, dest: str) -> None:
-        self._entries.append((src, dest))
-        self._refresh()
-
-    def _remove_selected(self) -> None:
-        if self._selected_index is not None and 0 <= self._selected_index < len(self._entries):
-            del self._entries[self._selected_index]
-            self._selected_index = None
-            self._refresh()
-
-    def _select(self, index: int) -> None:
-        self._selected_index = index
-        self._refresh()
-
-    def _refresh(self) -> None:
-        for widget in self._row_widgets:
-            widget.destroy()
-        self._row_widgets.clear()
-
-        for i, (src, dest) in enumerate(self._entries):
-            selected = i == self._selected_index
-            row = ctk.CTkFrame(
-                self.list_frame,
-                fg_color=("gray75", "gray28") if selected else "transparent",
-            )
-            row.grid(row=i, column=0, sticky="ew", pady=1)
-            row.grid_columnconfigure(0, weight=1)
-            row.bind("<Button-1>", lambda _e, idx=i: self._select(idx))
-
-            text = f"{src}  →  /{dest}"
-            lbl = ctk.CTkLabel(row, text=text, anchor="w")
-            lbl.grid(row=0, column=0, sticky="ew", padx=6, pady=4)
-            lbl.bind("<Button-1>", lambda _e, idx=i: self._select(idx))
-
-            self._row_widgets.append(row)
-
-    def get_entries(self) -> List[Tuple[str, str]]:
-        return list(self._entries)
-
-    def set_entries(self, entries: List[Tuple[str, str]]) -> None:
-        self._entries = list(entries)
-        self._selected_index = None
-        self._refresh()
-
-
 class LogConsole(ctk.CTkTextbox):
     """Read-only, auto-scrolling textbox used to show build output."""
 
     def __init__(self, master, **kwargs):
         kwargs.setdefault("wrap", "word")
         kwargs.setdefault("font", ("Consolas", 12))
+        kwargs.setdefault("fg_color", COLOR_CARD)
+        kwargs.setdefault("text_color", COLOR_TEXT)
+        kwargs.setdefault("border_color", COLOR_BORDER)
+        kwargs.setdefault("border_width", 1)
+        kwargs.setdefault("corner_radius", 16)
         super().__init__(master, **kwargs)
         self.configure(state="disabled")
 
@@ -499,6 +369,7 @@ class LogConsole(ctk.CTkTextbox):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
+        self.configure(fg_color=COLOR_BG)
         self.title("WindowsAppPacker — упаковщик Python в EXE")
         self.geometry("900x720")
         self.minsize(760, 600)
@@ -510,8 +381,8 @@ class App(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
 
-        self._build_preset_bar()
-        self._build_tabs()
+        self._build_content()
+        self._build_action_bar()
         self._build_log_console()
 
         self._check_pyinstaller()
@@ -519,124 +390,130 @@ class App(ctk.CTk):
 
     # ------------------------------------------------------------------ UI
 
-    def _build_preset_bar(self) -> None:
-        bar = ctk.CTkFrame(self, fg_color="transparent")
-        bar.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
-        bar.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(bar, text="Пресет:").grid(row=0, column=0, padx=(0, 6))
-
-        self.preset_var = ctk.StringVar(value="")
-        self.preset_menu = ctk.CTkOptionMenu(
-            bar, variable=self.preset_var, values=list_presets() or ["(нет пресетов)"]
+    def _card(self, parent, title: str) -> ctk.CTkFrame:
+        card = ctk.CTkFrame(parent, fg_color=COLOR_CARD, corner_radius=16, border_width=1, border_color=COLOR_BORDER)
+        card.grid_columnconfigure(0, weight=1)
+        header = ctk.CTkLabel(
+            card,
+            text=title,
+            text_color=COLOR_TEXT_MUTED,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            anchor="w",
         )
-        self.preset_menu.grid(row=0, column=1, sticky="ew")
+        header.grid(row=0, column=0, sticky="w", padx=16, pady=(14, 6))
+        return card
 
-        ctk.CTkButton(bar, text="Загрузить", width=90, command=self._load_preset).grid(
-            row=0, column=2, padx=(6, 0)
+    def _build_content(self) -> None:
+        wrapper = ctk.CTkFrame(self, fg_color="transparent")
+        wrapper.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
+        wrapper.grid_columnconfigure(0, weight=1)
+
+        # --- "Основное" card ----------------------------------------------
+        card_general = self._card(wrapper, "Основное")
+        card_general.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+
+        self.script_row = FilePathRow(
+            card_general, "Скрипт (.py):", PY_FILETYPES, on_change=self._on_script_change
         )
-        ctk.CTkButton(bar, text="Сохранить как...", width=130, command=self._save_preset).grid(
-            row=0, column=3, padx=(6, 0)
+        self.script_row.grid(row=1, column=0, sticky="ew", padx=16, pady=4)
+
+        output_name_row = ctk.CTkFrame(card_general, fg_color="transparent")
+        output_name_row.grid(row=2, column=0, sticky="ew", padx=16, pady=4)
+        output_name_row.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(output_name_row, text="Имя EXE:", width=110, anchor="w", text_color=COLOR_TEXT).grid(
+            row=0, column=0
         )
-        ctk.CTkButton(bar, text="Удалить", width=90, command=self._delete_preset).grid(
-            row=0, column=4, padx=(6, 0)
-        )
-
-    def _build_tabs(self) -> None:
-        self.tabview = ctk.CTkTabview(self)
-        self.tabview.grid(row=1, column=0, sticky="ew", padx=12, pady=6)
-        tab_general = self.tabview.add("Основное")
-        tab_data = self.tabview.add("Доп. файлы")
-        tab_meta = self.tabview.add("Метаданные")
-        tab_adv = self.tabview.add("Дополнительно")
-
-        # --- General tab -------------------------------------------------
-        tab_general.grid_columnconfigure(0, weight=1)
-
-        self.script_row = FilePathRow(tab_general, "Скрипт (.py):", PY_FILETYPES, on_change=self._on_script_change)
-        self.script_row.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
-
-        self.output_name_row = ctk.CTkFrame(tab_general, fg_color="transparent")
-        self.output_name_row.grid(row=1, column=0, sticky="ew", padx=10, pady=4)
-        self.output_name_row.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(self.output_name_row, text="Имя EXE:", width=110, anchor="w").grid(row=0, column=0)
         self.output_name_entry = ctk.CTkEntry(
-            self.output_name_row, placeholder_text="MyApp (без расширения)"
+            output_name_row, placeholder_text="MyApp (без расширения)", **ENTRY_STYLE
         )
         self.output_name_entry.grid(row=0, column=1, sticky="ew")
 
-        self.icon_row = FilePathRow(tab_general, "Иконка (.ico):", ICO_FILETYPES)
-        self.icon_row.grid(row=2, column=0, sticky="ew", padx=10, pady=4)
+        self.icon_row = FilePathRow(card_general, "Иконка (.ico):", ICO_FILETYPES)
+        self.icon_row.grid(row=3, column=0, sticky="ew", padx=16, pady=4)
 
-        self.output_dir_row = FilePathRow(tab_general, "Папка вывода:", [], pick_folder=True)
+        self.output_dir_row = FilePathRow(card_general, "Папка вывода:", [], pick_folder=True)
         self.output_dir_row.set("dist")
-        self.output_dir_row.grid(row=3, column=0, sticky="ew", padx=10, pady=4)
+        self.output_dir_row.grid(row=4, column=0, sticky="ew", padx=16, pady=4)
 
-        options_row = ctk.CTkFrame(tab_general, fg_color="transparent")
-        options_row.grid(row=4, column=0, sticky="ew", padx=10, pady=(10, 4))
+        options_row = ctk.CTkFrame(card_general, fg_color="transparent")
+        options_row.grid(row=5, column=0, sticky="ew", padx=16, pady=(10, 16))
 
-        ctk.CTkLabel(options_row, text="Тип сборки:").grid(row=0, column=0, padx=(0, 8))
+        ctk.CTkLabel(options_row, text="Тип сборки:", text_color=COLOR_TEXT).grid(row=0, column=0, padx=(0, 8))
         self.build_type_var = ctk.StringVar(value="Onefile")
         ctk.CTkSegmentedButton(
-            options_row, values=["Onefile", "Onedir"], variable=self.build_type_var
+            options_row,
+            values=["Onefile", "Onedir"],
+            variable=self.build_type_var,
+            fg_color=COLOR_INPUT,
+            selected_color=COLOR_ACCENT,
+            selected_hover_color=COLOR_ACCENT_HOVER,
+            unselected_color=COLOR_INPUT,
+            unselected_hover_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
         ).grid(row=0, column=1, padx=(0, 20))
 
         self.hide_console_var = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(
-            options_row, text="Скрыть окно консоли", variable=self.hide_console_var
+            options_row,
+            text="Скрыть окно консоли",
+            variable=self.hide_console_var,
+            fg_color=COLOR_ACCENT,
+            hover_color=COLOR_ACCENT_HOVER,
+            border_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
         ).grid(row=0, column=2, padx=(0, 20))
 
         self.admin_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
-            options_row, text="Требовать права администратора (UAC)", variable=self.admin_var
+            options_row,
+            text="Требовать права администратора",
+            variable=self.admin_var,
+            fg_color=COLOR_ACCENT,
+            hover_color=COLOR_ACCENT_HOVER,
+            border_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
         ).grid(row=0, column=3)
 
-        # --- Data files tab ----------------------------------------------
-        tab_data.grid_columnconfigure(0, weight=1)
-        tab_data.grid_rowconfigure(0, weight=1)
-        self.data_files_panel = DataFilesPanel(tab_data)
-        self.data_files_panel.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        # --- "Метаданные" card ----------------------------------------------
+        card_meta = self._card(wrapper, "Метаданные")
+        card_meta.grid(row=1, column=0, sticky="ew")
+        card_meta.grid_columnconfigure(1, weight=1)
 
-        # --- Metadata tab --------------------------------------------------
-        tab_meta.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(
-            tab_meta,
+            card_meta,
             text="Эти данные отображаются во вкладке «Подробности» свойств EXE в Windows.",
             wraplength=600,
             justify="left",
-        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 10))
+            text_color=COLOR_TEXT_MUTED,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 10))
 
-        self.version_entry = self._meta_field(tab_meta, 1, "Версия:", "1.0.0.0")
-        self.product_name_entry = self._meta_field(tab_meta, 2, "Имя продукта:", "")
-        self.author_entry = self._meta_field(tab_meta, 3, "Автор/компания:", "")
-        self.description_entry = self._meta_field(tab_meta, 4, "Описание:", "")
+        self.version_entry = self._meta_field(card_meta, 2, "Версия:", "1.0.0.0")
+        self.product_name_entry = self._meta_field(card_meta, 3, "Имя продукта:", "")
+        self.author_entry = self._meta_field(card_meta, 4, "Автор/компания:", "")
+        self.description_entry = self._meta_field(card_meta, 5, "Описание:", "", pady_bottom=16)
 
-        # --- Advanced tab --------------------------------------------------
-        tab_adv.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(tab_adv, text="Дополнительные аргументы PyInstaller:").grid(
-            row=0, column=0, sticky="w", padx=10, pady=(10, 4)
+    def _meta_field(self, parent, row: int, label: str, placeholder: str, pady_bottom: int = 4) -> ctk.CTkEntry:
+        ctk.CTkLabel(parent, text=label, width=130, anchor="w", text_color=COLOR_TEXT).grid(
+            row=row, column=0, sticky="w", padx=16, pady=(4, pady_bottom)
         )
-        self.extra_args_entry = ctk.CTkEntry(
-            tab_adv, placeholder_text="например: --hidden-import requests --exclude-module tkinter"
-        )
-        self.extra_args_entry.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
-
-    def _meta_field(self, parent, row: int, label: str, placeholder: str) -> ctk.CTkEntry:
-        ctk.CTkLabel(parent, text=label, width=130, anchor="w").grid(
-            row=row, column=0, sticky="w", padx=10, pady=4
-        )
-        entry = ctk.CTkEntry(parent, placeholder_text=placeholder)
-        entry.grid(row=row, column=1, sticky="ew", padx=(0, 10), pady=4)
+        entry = ctk.CTkEntry(parent, placeholder_text=placeholder, **ENTRY_STYLE)
+        entry.grid(row=row, column=1, sticky="ew", padx=(0, 16), pady=(4, pady_bottom))
         return entry
 
-    def _build_log_console(self) -> None:
-        # Action bar (build/cancel/progress) sits above the log console.
+    def _build_action_bar(self) -> None:
         action_bar = ctk.CTkFrame(self, fg_color="transparent")
-        action_bar.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 6))
+        action_bar.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 6))
         action_bar.grid_columnconfigure(2, weight=1)
 
         self.build_btn = ctk.CTkButton(
-            action_bar, text="Собрать EXE", command=self._start_build, height=36, width=140
+            action_bar,
+            text="Собрать EXE",
+            command=self._start_build,
+            height=36,
+            width=140,
+            fg_color=COLOR_ACCENT,
+            hover_color=COLOR_ACCENT_HOVER,
+            text_color="#0b1210",
         )
         self.build_btn.grid(row=0, column=0)
 
@@ -647,20 +524,22 @@ class App(ctk.CTk):
             height=36,
             width=100,
             state="disabled",
-            fg_color="#8a2d2d",
-            hover_color="#6e2323",
+            fg_color=COLOR_DANGER,
+            hover_color=COLOR_DANGER_HOVER,
         )
         self.cancel_btn.grid(row=0, column=1, padx=(8, 0))
 
-        self.progress_bar = ctk.CTkProgressBar(action_bar, mode="indeterminate")
+        self.progress_bar = ctk.CTkProgressBar(
+            action_bar, mode="indeterminate", fg_color=COLOR_INPUT, progress_color=COLOR_ACCENT
+        )
         self.progress_bar.grid(row=0, column=2, sticky="ew", padx=16)
 
-        self.status_label = ctk.CTkLabel(action_bar, text="Готово к сборке", anchor="e")
+        self.status_label = ctk.CTkLabel(action_bar, text="Готово к сборке", anchor="e", text_color=COLOR_TEXT_MUTED)
         self.status_label.grid(row=0, column=3)
 
-        self.grid_rowconfigure(3, weight=1)
+    def _build_log_console(self) -> None:
         self.log_console = LogConsole(self)
-        self.log_console.grid(row=3, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        self.log_console.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
 
     # ------------------------------------------------------------- helpers
 
@@ -686,72 +565,11 @@ class App(ctk.CTk):
             onefile=self.build_type_var.get() == "Onefile",
             hide_console=self.hide_console_var.get(),
             admin_rights=self.admin_var.get(),
-            data_files=self.data_files_panel.get_entries(),
             version=self.version_entry.get().strip() or "1.0.0.0",
             description=self.description_entry.get().strip(),
             author=self.author_entry.get().strip(),
             product_name=self.product_name_entry.get().strip(),
-            extra_args=self.extra_args_entry.get().strip(),
         )
-
-    def _apply_config(self, cfg: BuildConfig) -> None:
-        self.script_row.set(cfg.script_path)
-        self.output_name_entry.delete(0, "end")
-        self.output_name_entry.insert(0, cfg.output_name)
-        self.icon_row.set(cfg.icon_path)
-        self.output_dir_row.set(cfg.output_dir)
-        self.build_type_var.set("Onefile" if cfg.onefile else "Onedir")
-        self.hide_console_var.set(cfg.hide_console)
-        self.admin_var.set(cfg.admin_rights)
-        self.data_files_panel.set_entries(cfg.data_files)
-        self.version_entry.delete(0, "end")
-        self.version_entry.insert(0, cfg.version)
-        self.description_entry.delete(0, "end")
-        self.description_entry.insert(0, cfg.description)
-        self.author_entry.delete(0, "end")
-        self.author_entry.insert(0, cfg.author)
-        self.product_name_entry.delete(0, "end")
-        self.product_name_entry.insert(0, cfg.product_name)
-        self.extra_args_entry.delete(0, "end")
-        self.extra_args_entry.insert(0, cfg.extra_args)
-
-    # ------------------------------------------------------------- presets
-
-    def _refresh_preset_menu(self, select: Optional[str] = None) -> None:
-        names = list_presets()
-        self.preset_menu.configure(values=names or ["(нет пресетов)"])
-        if select and select in names:
-            self.preset_var.set(select)
-        elif names:
-            self.preset_var.set(names[0])
-        else:
-            self.preset_var.set("(нет пресетов)")
-
-    def _load_preset(self) -> None:
-        name = self.preset_var.get()
-        if not name or name == "(нет пресетов)":
-            return
-        try:
-            cfg = load_preset(name)
-        except Exception as exc:
-            messagebox.showerror("Ошибка", f"Не удалось загрузить пресет: {exc}")
-            return
-        self._apply_config(cfg)
-
-    def _save_preset(self) -> None:
-        name = simpledialog.askstring("Сохранить пресет", "Имя пресета:")
-        if not name:
-            return
-        save_preset(name, self._collect_config())
-        self._refresh_preset_menu(select=name)
-
-    def _delete_preset(self) -> None:
-        name = self.preset_var.get()
-        if not name or name == "(нет пресетов)":
-            return
-        if messagebox.askyesno("Удалить пресет", f"Удалить пресет «{name}»?"):
-            delete_preset(name)
-            self._refresh_preset_menu()
 
     # -------------------------------------------------------------- build
 
