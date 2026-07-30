@@ -302,36 +302,21 @@ class MessageDialog(ctk.CTkToplevel):
     """Themed replacement for tkinter.messagebox — the native dialog ignores
     the app's dark/light palette entirely (it's an OS-drawn window)."""
 
-    def __init__(self, master: ctk.CTk, colors: dict, title: str, message: str, kind: str = "error"):
+    def __init__(self, master: ctk.CTk, colors: dict, title: str, message: str):
         super().__init__(master)
         self.title(title)
         self.resizable(False, False)
         self.configure(fg_color=colors["bg"])
         self.transient(master)
 
-        badge_color = colors["danger"] if kind == "error" else colors["accent"]
-        symbol = "✕" if kind == "error" else "i"
-
         content = ctk.CTkFrame(self, fg_color=colors["card"], corner_radius=16, border_width=1, border_color=colors["border"])
         content.grid(row=0, column=0, padx=16, pady=16)
         content.grid_columnconfigure(0, weight=1)
 
-        badge = ctk.CTkLabel(
-            content,
-            text=symbol,
-            width=48,
-            height=48,
-            corner_radius=24,
-            fg_color=badge_color,
-            text_color="#ffffff",
-            font=ctk.CTkFont(size=20, weight="bold"),
-        )
-        badge.grid(row=0, column=0, padx=24, pady=(24, 12))
-
         msg_label = ctk.CTkLabel(
-            content, text=message, text_color=colors["text"], wraplength=260, justify="center"
+            content, text=message, text_color=colors["text"], wraplength=360, justify="center"
         )
-        msg_label.grid(row=1, column=0, padx=24, pady=(0, 20))
+        msg_label.grid(row=0, column=0, padx=32, pady=(28, 16))
 
         ok_btn = ctk.CTkButton(
             content,
