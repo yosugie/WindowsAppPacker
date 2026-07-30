@@ -42,6 +42,8 @@ DATA_SEP = ";" if os.name == "nt" else ":"
 OutputCallback = Callable[[str], None]
 DoneCallback = Callable[[int], None]
 
+_VERSION_INPUT_RE = re.compile(r"\d+(\.\d+)*\.?")
+
 # --------------------------------------------------------------------------
 # color palette: dark and light variants, both with a blue accent
 # --------------------------------------------------------------------------
@@ -86,9 +88,8 @@ class BuildConfig:
     script_path: str = ""
     output_name: str = ""
     icon_path: str = ""
-    output_dir: str = "dist"
+    output_dir: str = ""
 
-    onefile: bool = True
     hide_console: bool = True
     admin_rights: bool = False
 
@@ -186,9 +187,8 @@ def write_version_file(path: str, **kwargs) -> str:
 
 
 def build_command(cfg: BuildConfig, version_file: Optional[str]) -> List[str]:
-    cmd = [sys.executable, "-m", "PyInstaller", cfg.script_path, "--noconfirm"]
+    cmd = [sys.executable, "-m", "PyInstaller", cfg.script_path, "--noconfirm", "--onefile"]
 
-    cmd.append("--onefile" if cfg.onefile else "--onedir")
     cmd.append("--noconsole" if cfg.hide_console else "--console")
 
     if cfg.output_name:
@@ -279,6 +279,18 @@ class BuildJob:
 # --------------------------------------------------------------------------
 
 
+def _clear_entry(entry: ctk.CTkEntry) -> None:
+    """Clears an entry back to its placeholder.
+
+    CTkEntry.delete() only re-shows the placeholder if the widget has
+    already received a real <FocusOut> event at least once (its internal
+    "_is_focused" flag defaults to True) — for a field the user never
+    clicked into, a plain delete() leaves it blank with no hint at all.
+    """
+    entry.delete(0, "end")
+    entry._activate_placeholder()
+
+
 class FilePathRow(ctk.CTkFrame):
     """Label + entry + Browse button, with optional drag-and-drop support."""
 
@@ -289,6 +301,7 @@ class FilePathRow(ctk.CTkFrame):
         filetypes: List[Tuple[str, str]],
         on_change: Optional[Callable[[str], None]] = None,
         pick_folder: bool = False,
+        placeholder: str = "Не выбрано",
         **kwargs,
     ):
         super().__init__(master, fg_color="transparent", **kwargs)
@@ -301,7 +314,7 @@ class FilePathRow(ctk.CTkFrame):
         self.label = ctk.CTkLabel(self, text=label, width=110, anchor="w")
         self.label.grid(row=0, column=0, padx=(0, 8), sticky="w")
 
-        self.entry = ctk.CTkEntry(self, placeholder_text="Перетащите файл сюда или нажмите «Обзор»")
+        self.entry = ctk.CTkEntry(self, placeholder_text=placeholder)
         self.entry.grid(row=0, column=1, sticky="ew")
         self.entry.bind("<KeyRelease>", lambda _e: self._notify())
 
@@ -341,8 +354,11 @@ class FilePathRow(ctk.CTkFrame):
         return self.entry.get().strip()
 
     def set(self, value: str) -> None:
-        self.entry.delete(0, "end")
-        self.entry.insert(0, value)
+        if value:
+            self.entry.delete(0, "end")
+            self.entry.insert(0, value)
+        else:
+            _clear_entry(self.entry)
         self._notify()
 
 
@@ -381,8 +397,8 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("WindowsAppPacker — упаковщик Python в EXE")
-        self.geometry("900x760")
-        self.minsize(760, 620)
+        self.geometry("900x740")
+        self.minsize(760, 600)
 
         self.theme = "dark"
         self.colors = THEMES[self.theme]
@@ -445,9 +461,12 @@ class App(ctk.CTk):
                 widget.apply_theme(c)
 
     def _on_theme_change(self, value: str) -> None:
+        # Note: deliberately not calling ctk.set_appearance_mode() here — it
+        # broadcasts to every CTk widget in the app and forces a full redraw,
+        # which looks like the window restarting. Recoloring through the
+        # registry above is enough since every color is set explicitly.
         self.theme = "dark" if value == "Тёмная" else "light"
         self.colors = THEMES[self.theme]
-        ctk.set_appearance_mode(self.theme)
         self._apply_theme()
 
     # ------------------------------------------------------------------ UI
@@ -476,16 +495,20 @@ class App(ctk.CTk):
     def _build_topbar(self) -> None:
         topbar = ctk.CTkFrame(self, fg_color="transparent")
         topbar.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 0))
-        topbar.grid_columnconfigure(0, weight=1)
+        topbar.grid_columnconfigure(1, weight=1)
+
+        title_label = ctk.CTkLabel(topbar, text="WindowsAppPacker", font=ctk.CTkFont(size=16, weight="bold"), anchor="w")
+        self._reg(title_label, "label")
+        title_label.grid(row=0, column=0, sticky="w")
 
         theme_label = ctk.CTkLabel(topbar, text="Тема:")
         self._reg(theme_label, "label")
-        theme_label.grid(row=0, column=1, padx=(0, 8))
+        theme_label.grid(row=0, column=2, padx=(0, 8))
 
         self.theme_var = ctk.StringVar(value="Тёмная")
         self._make_segmented(
             topbar, ["Тёмная", "Светлая"], self.theme_var, command=self._on_theme_change
-        ).grid(row=0, column=2)
+        ).grid(row=0, column=3)
 
     def _build_content(self) -> None:
         wrapper = ctk.CTkFrame(self, fg_color="transparent")
@@ -497,11 +520,17 @@ class App(ctk.CTk):
         card_general.grid(row=0, column=0, sticky="ew", pady=(0, 10))
 
         self.script_row = FilePathRow(
-            card_general, "Скрипт (.py):", PY_FILETYPES, on_change=self._on_script_change
+            card_general,
+            "Скрипт (.py):",
+            PY_FILETYPES,
+            on_change=self._on_script_change,
+            placeholder="Файл не выбран",
         )
         self._reg(self.script_row, "file_row")
         self.script_row.grid(row=1, column=0, sticky="ew", padx=16, pady=4)
 
+        # Extra trailing column matching the Browse button's width (90px +
+        # 8px gap), so this row's entry lines up with the FilePathRow rows.
         output_name_row = ctk.CTkFrame(card_general, fg_color="transparent")
         output_name_row.grid(row=2, column=0, sticky="ew", padx=16, pady=4)
         output_name_row.grid_columnconfigure(1, weight=1)
@@ -511,36 +540,35 @@ class App(ctk.CTk):
         self.output_name_entry = ctk.CTkEntry(output_name_row, placeholder_text="MyApp (без расширения)")
         self._reg(self.output_name_entry, "input")
         self.output_name_entry.grid(row=0, column=1, sticky="ew")
+        name_spacer = ctk.CTkLabel(output_name_row, text="", width=90, fg_color="transparent")
+        name_spacer.grid(row=0, column=2, padx=(8, 0))
 
-        self.icon_row = FilePathRow(card_general, "Иконка (.ico):", ICO_FILETYPES)
+        self.icon_row = FilePathRow(
+            card_general, "Иконка (.ico):", ICO_FILETYPES, placeholder="Иконка не выбрана"
+        )
         self._reg(self.icon_row, "file_row")
         self.icon_row.grid(row=3, column=0, sticky="ew", padx=16, pady=4)
 
-        self.output_dir_row = FilePathRow(card_general, "Папка вывода:", [], pick_folder=True)
-        self.output_dir_row.set("dist")
+        self.output_dir_row = FilePathRow(
+            card_general, "Папка вывода:", [], pick_folder=True, placeholder="Папка не выбрана"
+        )
         self._reg(self.output_dir_row, "file_row")
         self.output_dir_row.grid(row=4, column=0, sticky="ew", padx=16, pady=4)
 
         options_row = ctk.CTkFrame(card_general, fg_color="transparent")
         options_row.grid(row=5, column=0, sticky="ew", padx=16, pady=(10, 16))
 
-        type_label = ctk.CTkLabel(options_row, text="Тип сборки:")
-        self._reg(type_label, "label")
-        type_label.grid(row=0, column=0, padx=(0, 8))
-        self.build_type_var = ctk.StringVar(value="Onefile")
-        self._make_segmented(options_row, ["Onefile", "Onedir"], self.build_type_var).grid(
-            row=0, column=1, padx=(0, 20)
-        )
-
         self.hide_console_var = ctk.BooleanVar(value=True)
-        hide_console_cb = ctk.CTkCheckBox(options_row, text="Скрыть окно консоли", variable=self.hide_console_var)
+        hide_console_cb = ctk.CTkCheckBox(options_row, text="Скрыть консоль (cmd)", variable=self.hide_console_var)
         self._reg(hide_console_cb, "checkbox")
-        hide_console_cb.grid(row=0, column=2, padx=(0, 20))
+        hide_console_cb.grid(row=0, column=0, padx=(0, 20))
 
         self.admin_var = ctk.BooleanVar(value=False)
-        admin_cb = ctk.CTkCheckBox(options_row, text="Требовать права администратора", variable=self.admin_var)
+        admin_cb = ctk.CTkCheckBox(
+            options_row, text="Запуск от имени администратора", variable=self.admin_var
+        )
         self._reg(admin_cb, "checkbox")
-        admin_cb.grid(row=0, column=3)
+        admin_cb.grid(row=0, column=1)
 
         # --- "Метаданные" card ----------------------------------------------
         card_meta = self._card(wrapper, "Метаданные")
@@ -556,19 +584,29 @@ class App(ctk.CTk):
         self._reg(meta_hint, "muted")
         meta_hint.grid(row=1, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 10))
 
-        self.version_entry = self._meta_field(card_meta, 2, "Версия:", "1.0.0.0")
+        version_vcmd = (self.register(self._validate_version_input), "%P")
+        self.version_entry = self._meta_field(
+            card_meta, 2, "Версия:", "1.0.0.0", validate="key", validatecommand=version_vcmd
+        )
         self.product_name_entry = self._meta_field(card_meta, 3, "Имя продукта:", "")
         self.author_entry = self._meta_field(card_meta, 4, "Автор/компания:", "")
         self.description_entry = self._meta_field(card_meta, 5, "Описание:", "", pady_bottom=16)
 
-    def _meta_field(self, parent, row: int, label: str, placeholder: str, pady_bottom: int = 4) -> ctk.CTkEntry:
+    def _meta_field(
+        self, parent, row: int, label: str, placeholder: str, pady_bottom: int = 4, **entry_kwargs
+    ) -> ctk.CTkEntry:
         lbl = ctk.CTkLabel(parent, text=label, width=130, anchor="w")
         self._reg(lbl, "label")
         lbl.grid(row=row, column=0, sticky="w", padx=16, pady=(4, pady_bottom))
-        entry = ctk.CTkEntry(parent, placeholder_text=placeholder)
+        entry = ctk.CTkEntry(parent, placeholder_text=placeholder, **entry_kwargs)
         self._reg(entry, "input")
         entry.grid(row=row, column=1, sticky="ew", padx=(0, 16), pady=(4, pady_bottom))
         return entry
+
+    def _validate_version_input(self, proposed: str) -> bool:
+        if proposed == "":
+            return True
+        return bool(_VERSION_INPUT_RE.fullmatch(proposed))
 
     def _build_action_bar(self) -> None:
         action_bar = ctk.CTkFrame(self, fg_color="transparent")
@@ -613,17 +651,20 @@ class App(ctk.CTk):
             )
 
     def _on_script_change(self, path: str) -> None:
-        if path and not self.output_name_entry.get().strip():
+        if not path:
+            return
+        if not self.output_name_entry.get().strip():
             name = os.path.splitext(os.path.basename(path))[0]
             self.output_name_entry.insert(0, name)
+        if not self.output_dir_row.get():
+            self.output_dir_row.set(os.path.dirname(os.path.abspath(path)))
 
     def _collect_config(self) -> BuildConfig:
         return BuildConfig(
             script_path=self.script_row.get(),
             output_name=self.output_name_entry.get().strip(),
             icon_path=self.icon_row.get(),
-            output_dir=self.output_dir_row.get() or "dist",
-            onefile=self.build_type_var.get() == "Onefile",
+            output_dir=self.output_dir_row.get(),
             hide_console=self.hide_console_var.get(),
             admin_rights=self.admin_var.get(),
             version=self.version_entry.get().strip() or "1.0.0.0",
@@ -635,17 +676,16 @@ class App(ctk.CTk):
     def _clear_form(self) -> None:
         default = BuildConfig()
         self.script_row.set(default.script_path)
-        self.output_name_entry.delete(0, "end")
+        _clear_entry(self.output_name_entry)
         self.icon_row.set(default.icon_path)
         self.output_dir_row.set(default.output_dir)
-        self.build_type_var.set("Onefile" if default.onefile else "Onedir")
         self.hide_console_var.set(default.hide_console)
         self.admin_var.set(default.admin_rights)
         self.version_entry.delete(0, "end")
         self.version_entry.insert(0, default.version)
-        self.product_name_entry.delete(0, "end")
-        self.author_entry.delete(0, "end")
-        self.description_entry.delete(0, "end")
+        _clear_entry(self.product_name_entry)
+        _clear_entry(self.author_entry)
+        _clear_entry(self.description_entry)
         self.log_console.clear()
         self.status_label.configure(text="Готово к сборке")
 
