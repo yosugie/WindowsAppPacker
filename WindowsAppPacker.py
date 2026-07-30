@@ -44,6 +44,17 @@ DoneCallback = Callable[[int], None]
 
 _VERSION_INPUT_RE = re.compile(r"\d+(\.\d+)*\.?")
 
+# Rough progress milestones based on recognizable lines in PyInstaller's own
+# log output — not a real byte/step count (PyInstaller doesn't expose one),
+# just enough to make the bar visibly advance instead of sitting still.
+_BUILD_MILESTONES = [
+    ("Analyzing ", 10),
+    ("Building PYZ", 35),
+    ("Building PKG", 55),
+    ("Building EXE", 80),
+    ("Build complete", 100),
+]
+
 # --------------------------------------------------------------------------
 # color palette: dark and light variants, both with a blue accent
 # --------------------------------------------------------------------------
@@ -407,6 +418,7 @@ class App(ctk.CTk):
         self._build_job: Optional[BuildJob] = None
         self._log_queue: "queue.Queue[str]" = queue.Queue()
         self._done_queue: "queue.Queue[int]" = queue.Queue()
+        self._milestone_idx = 0
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(3, weight=1)
@@ -465,7 +477,10 @@ class App(ctk.CTk):
         # broadcasts to every CTk widget in the app and forces a full redraw,
         # which looks like the window restarting. Recoloring through the
         # registry above is enough since every color is set explicitly.
-        self.theme = "dark" if value == "Тёмная" else "light"
+        new_theme = "dark" if value == "Тёмная" else "light"
+        if new_theme == self.theme:
+            return  # segmented button fires even when reselecting the active value
+        self.theme = new_theme
         self.colors = THEMES[self.theme]
         self._apply_theme()
 
@@ -499,7 +514,7 @@ class App(ctk.CTk):
 
         title_label = ctk.CTkLabel(topbar, text="WindowsAppPacker", font=ctk.CTkFont(size=16, weight="bold"), anchor="w")
         self._reg(title_label, "label")
-        title_label.grid(row=0, column=0, sticky="w")
+        title_label.grid(row=0, column=0, sticky="w", padx=(16, 0))
 
         theme_label = ctk.CTkLabel(topbar, text="Тема:")
         self._reg(theme_label, "label")
@@ -536,7 +551,7 @@ class App(ctk.CTk):
         output_name_row.grid_columnconfigure(1, weight=1)
         name_label = ctk.CTkLabel(output_name_row, text="Имя EXE:", width=110, anchor="w")
         self._reg(name_label, "label")
-        name_label.grid(row=0, column=0)
+        name_label.grid(row=0, column=0, padx=(0, 8))
         self.output_name_entry = ctk.CTkEntry(output_name_row, placeholder_text="MyApp (без расширения)")
         self._reg(self.output_name_entry, "input")
         self.output_name_entry.grid(row=0, column=1, sticky="ew")
@@ -556,7 +571,7 @@ class App(ctk.CTk):
         self.output_dir_row.grid(row=4, column=0, sticky="ew", padx=16, pady=4)
 
         options_row = ctk.CTkFrame(card_general, fg_color="transparent")
-        options_row.grid(row=5, column=0, sticky="ew", padx=16, pady=(10, 16))
+        options_row.grid(row=5, column=0, sticky="ew", padx=16, pady=(10, 6))
 
         self.hide_console_var = ctk.BooleanVar(value=True)
         hide_console_cb = ctk.CTkCheckBox(options_row, text="Скрыть консоль (cmd)", variable=self.hide_console_var)
@@ -570,27 +585,30 @@ class App(ctk.CTk):
         self._reg(admin_cb, "checkbox")
         admin_cb.grid(row=0, column=1)
 
+        self.clear_general_btn = ctk.CTkButton(
+            card_general, text="Очистить", command=self._clear_general, height=32, width=110
+        )
+        self._reg(self.clear_general_btn, "danger_button")
+        self.clear_general_btn.grid(row=6, column=0, sticky="e", padx=16, pady=(0, 16))
+
         # --- "Метаданные" card ----------------------------------------------
         card_meta = self._card(wrapper, "Метаданные")
         card_meta.grid(row=1, column=0, sticky="ew")
         card_meta.grid_columnconfigure(1, weight=1)
 
-        meta_hint = ctk.CTkLabel(
-            card_meta,
-            text="Эти данные отображаются во вкладке «Подробности» свойств EXE в Windows.",
-            wraplength=600,
-            justify="left",
-        )
-        self._reg(meta_hint, "muted")
-        meta_hint.grid(row=1, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 10))
-
         version_vcmd = (self.register(self._validate_version_input), "%P")
         self.version_entry = self._meta_field(
-            card_meta, 2, "Версия:", "1.0.0.0", validate="key", validatecommand=version_vcmd
+            card_meta, 1, "Версия:", "1.0.0.0", validate="key", validatecommand=version_vcmd
         )
-        self.product_name_entry = self._meta_field(card_meta, 3, "Имя продукта:", "")
-        self.author_entry = self._meta_field(card_meta, 4, "Автор/компания:", "")
-        self.description_entry = self._meta_field(card_meta, 5, "Описание:", "", pady_bottom=16)
+        self.product_name_entry = self._meta_field(card_meta, 2, "Имя продукта:", "")
+        self.author_entry = self._meta_field(card_meta, 3, "Автор/компания:", "")
+        self.description_entry = self._meta_field(card_meta, 4, "Описание:", "")
+
+        self.clear_meta_btn = ctk.CTkButton(
+            card_meta, text="Очистить", command=self._clear_metadata, height=32, width=110
+        )
+        self._reg(self.clear_meta_btn, "danger_button")
+        self.clear_meta_btn.grid(row=5, column=1, sticky="e", padx=(0, 16), pady=(6, 16))
 
     def _meta_field(
         self, parent, row: int, label: str, placeholder: str, pady_bottom: int = 4, **entry_kwargs
@@ -611,29 +629,26 @@ class App(ctk.CTk):
     def _build_action_bar(self) -> None:
         action_bar = ctk.CTkFrame(self, fg_color="transparent")
         action_bar.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 6))
-        action_bar.grid_columnconfigure(3, weight=1)
+        action_bar.grid_columnconfigure(2, weight=1)
 
         self.build_btn = ctk.CTkButton(action_bar, text="Собрать EXE", command=self._start_build, height=36, width=140)
         self._reg(self.build_btn, "accent_button")
         self.build_btn.grid(row=0, column=0)
 
-        self.clear_btn = ctk.CTkButton(action_bar, text="Очистить", command=self._clear_form, height=36, width=100)
-        self._reg(self.clear_btn, "danger_button")
-        self.clear_btn.grid(row=0, column=1, padx=(8, 0))
-
         self.cancel_btn = ctk.CTkButton(
             action_bar, text="Отмена", command=self._cancel_build, height=36, width=100, state="disabled"
         )
         self._reg(self.cancel_btn, "danger_button")
-        self.cancel_btn.grid(row=0, column=2, padx=(8, 0))
+        self.cancel_btn.grid(row=0, column=1, padx=(8, 0))
 
-        self.progress_bar = ctk.CTkProgressBar(action_bar, mode="indeterminate")
+        self.progress_bar = ctk.CTkProgressBar(action_bar, mode="determinate")
+        self.progress_bar.set(0)
         self._reg(self.progress_bar, "progress")
-        self.progress_bar.grid(row=0, column=3, sticky="ew", padx=16)
+        self.progress_bar.grid(row=0, column=2, sticky="ew", padx=16)
 
         self.status_label = ctk.CTkLabel(action_bar, text="Готово к сборке", anchor="e")
         self._reg(self.status_label, "muted")
-        self.status_label.grid(row=0, column=4)
+        self.status_label.grid(row=0, column=3)
 
     def _build_log_console(self) -> None:
         self.log_console = LogConsole(self)
@@ -673,7 +688,7 @@ class App(ctk.CTk):
             product_name=self.product_name_entry.get().strip(),
         )
 
-    def _clear_form(self) -> None:
+    def _clear_general(self) -> None:
         default = BuildConfig()
         self.script_row.set(default.script_path)
         _clear_entry(self.output_name_entry)
@@ -681,13 +696,14 @@ class App(ctk.CTk):
         self.output_dir_row.set(default.output_dir)
         self.hide_console_var.set(default.hide_console)
         self.admin_var.set(default.admin_rights)
+
+    def _clear_metadata(self) -> None:
+        default = BuildConfig()
         self.version_entry.delete(0, "end")
         self.version_entry.insert(0, default.version)
         _clear_entry(self.product_name_entry)
         _clear_entry(self.author_entry)
         _clear_entry(self.description_entry)
-        self.log_console.clear()
-        self.status_label.configure(text="Готово к сборке")
 
     # -------------------------------------------------------------- build
 
@@ -699,11 +715,13 @@ class App(ctk.CTk):
             return
 
         self.log_console.clear()
+        self._milestone_idx = 0
+        self.progress_bar.set(0)
         self.build_btn.configure(state="disabled")
-        self.clear_btn.configure(state="disabled")
+        self.clear_general_btn.configure(state="disabled")
+        self.clear_meta_btn.configure(state="disabled")
         self.cancel_btn.configure(state="normal")
-        self.status_label.configure(text="Идёт сборка...")
-        self.progress_bar.start()
+        self.status_label.configure(text="Идёт сборка... 0%")
 
         self._build_job = BuildJob(
             cfg,
@@ -717,11 +735,21 @@ class App(ctk.CTk):
             self._build_job.cancel()
             self.status_label.configure(text="Отмена...")
 
+    def _advance_progress(self, line: str) -> None:
+        while self._milestone_idx < len(_BUILD_MILESTONES):
+            marker, pct = _BUILD_MILESTONES[self._milestone_idx]
+            if marker not in line:
+                break
+            self._milestone_idx += 1
+            self.progress_bar.set(pct / 100)
+            self.status_label.configure(text=f"Идёт сборка... {pct}%")
+
     def _poll_queues(self) -> None:
         try:
             while True:
                 line = self._log_queue.get_nowait()
                 self.log_console.write(line)
+                self._advance_progress(line)
         except queue.Empty:
             pass
 
@@ -731,12 +759,12 @@ class App(ctk.CTk):
             code = None
 
         if code is not None:
-            self.progress_bar.stop()
-            self.progress_bar.set(0)
             self.build_btn.configure(state="normal")
-            self.clear_btn.configure(state="normal")
+            self.clear_general_btn.configure(state="normal")
+            self.clear_meta_btn.configure(state="normal")
             self.cancel_btn.configure(state="disabled")
             if code == 0:
+                self.progress_bar.set(1.0)
                 self.status_label.configure(text="Сборка успешно завершена")
             else:
                 self.status_label.configure(text=f"Сборка завершилась с ошибкой (код {code})")
