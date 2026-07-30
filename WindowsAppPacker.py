@@ -32,7 +32,7 @@ except ImportError:  # optional dependency
     DND_AVAILABLE = False
 
 ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("green")
+ctk.set_default_color_theme("blue")
 
 PY_FILETYPES = [("Python files", "*.py"), ("All files", "*.*")]
 ICO_FILETYPES = [("Icon files", "*.ico"), ("All files", "*.*")]
@@ -43,21 +43,37 @@ OutputCallback = Callable[[str], None]
 DoneCallback = Callable[[int], None]
 
 # --------------------------------------------------------------------------
-# color palette (dark background + mint-green accent)
+# color palette: dark and light variants, both with a blue accent
 # --------------------------------------------------------------------------
 
-COLOR_BG = "#131316"
-COLOR_CARD = "#1b1c22"
-COLOR_INPUT = "#212228"
-COLOR_BORDER = "#2a2b33"
-COLOR_TEXT = "#e6e6ea"
-COLOR_TEXT_MUTED = "#8b8d98"
-COLOR_ACCENT = "#1fdb7d"
-COLOR_ACCENT_HOVER = "#18b967"
-COLOR_DANGER = "#e5484d"
-COLOR_DANGER_HOVER = "#c93d41"
-
-ENTRY_STYLE = dict(fg_color=COLOR_INPUT, border_color=COLOR_BORDER, text_color=COLOR_TEXT)
+THEMES = {
+    "dark": dict(
+        bg="#131316",
+        card="#1b1c22",
+        input="#212228",
+        border="#2a2b33",
+        text="#e6e6ea",
+        muted="#8b8d98",
+        accent="#3b82f6",
+        accent_hover="#2563eb",
+        accent_text="#ffffff",
+        danger="#e5484d",
+        danger_hover="#c93d41",
+    ),
+    "light": dict(
+        bg="#f4f5f8",
+        card="#ffffff",
+        input="#eef1f6",
+        border="#dde2ea",
+        text="#15171c",
+        muted="#6b7280",
+        accent="#2563eb",
+        accent_hover="#1d4ed8",
+        accent_text="#ffffff",
+        danger="#dc2626",
+        danger_hover="#b91c1c",
+    ),
+}
 
 
 # --------------------------------------------------------------------------
@@ -282,24 +298,14 @@ class FilePathRow(ctk.CTkFrame):
 
         self.grid_columnconfigure(1, weight=1)
 
-        self.label = ctk.CTkLabel(self, text=label, width=110, anchor="w", text_color=COLOR_TEXT)
+        self.label = ctk.CTkLabel(self, text=label, width=110, anchor="w")
         self.label.grid(row=0, column=0, padx=(0, 8), sticky="w")
 
-        self.entry = ctk.CTkEntry(
-            self, placeholder_text="Перетащите файл сюда или нажмите «Обзор»", **ENTRY_STYLE
-        )
+        self.entry = ctk.CTkEntry(self, placeholder_text="Перетащите файл сюда или нажмите «Обзор»")
         self.entry.grid(row=0, column=1, sticky="ew")
         self.entry.bind("<KeyRelease>", lambda _e: self._notify())
 
-        self.browse_btn = ctk.CTkButton(
-            self,
-            text="Обзор...",
-            width=90,
-            command=self._browse,
-            fg_color=COLOR_INPUT,
-            hover_color=COLOR_BORDER,
-            text_color=COLOR_TEXT,
-        )
+        self.browse_btn = ctk.CTkButton(self, text="Обзор...", width=90, command=self._browse)
         self.browse_btn.grid(row=0, column=2, padx=(8, 0))
 
         if DND_AVAILABLE:
@@ -308,6 +314,11 @@ class FilePathRow(ctk.CTkFrame):
                 self.entry.dnd_bind("<<Drop>>", self._on_drop)
             except Exception:
                 pass
+
+    def apply_theme(self, colors: dict) -> None:
+        self.label.configure(text_color=colors["text"])
+        self.entry.configure(fg_color=colors["input"], border_color=colors["border"], text_color=colors["text"])
+        self.browse_btn.configure(fg_color=colors["input"], hover_color=colors["border"], text_color=colors["text"])
 
     def _browse(self) -> None:
         if self.pick_folder:
@@ -341,13 +352,13 @@ class LogConsole(ctk.CTkTextbox):
     def __init__(self, master, **kwargs):
         kwargs.setdefault("wrap", "word")
         kwargs.setdefault("font", ("Consolas", 12))
-        kwargs.setdefault("fg_color", COLOR_CARD)
-        kwargs.setdefault("text_color", COLOR_TEXT)
-        kwargs.setdefault("border_color", COLOR_BORDER)
         kwargs.setdefault("border_width", 1)
         kwargs.setdefault("corner_radius", 16)
         super().__init__(master, **kwargs)
         self.configure(state="disabled")
+
+    def apply_theme(self, colors: dict) -> None:
+        self.configure(fg_color=colors["card"], text_color=colors["text"], border_color=colors["border"])
 
     def write(self, text: str) -> None:
         self.configure(state="normal")
@@ -369,43 +380,116 @@ class LogConsole(ctk.CTkTextbox):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.configure(fg_color=COLOR_BG)
         self.title("WindowsAppPacker — упаковщик Python в EXE")
-        self.geometry("900x720")
-        self.minsize(760, 600)
+        self.geometry("900x760")
+        self.minsize(760, 620)
+
+        self.theme = "dark"
+        self.colors = THEMES[self.theme]
+        self._themed: List[Tuple[object, str]] = []
 
         self._build_job: Optional[BuildJob] = None
         self._log_queue: "queue.Queue[str]" = queue.Queue()
         self._done_queue: "queue.Queue[int]" = queue.Queue()
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)
+        self.grid_rowconfigure(3, weight=1)
 
+        self._build_topbar()
         self._build_content()
         self._build_action_bar()
         self._build_log_console()
 
+        self._apply_theme()
         self._check_pyinstaller()
         self._poll_queues()
 
+    # ------------------------------------------------------------- theming
+
+    def _reg(self, widget, kind: str):
+        self._themed.append((widget, kind))
+        return widget
+
+    def _apply_theme(self) -> None:
+        c = self.colors
+        self.configure(fg_color=c["bg"])
+        for widget, kind in self._themed:
+            if kind == "card":
+                widget.configure(fg_color=c["card"], border_color=c["border"])
+            elif kind == "label":
+                widget.configure(text_color=c["text"])
+            elif kind == "muted":
+                widget.configure(text_color=c["muted"])
+            elif kind == "input":
+                widget.configure(fg_color=c["input"], border_color=c["border"], text_color=c["text"])
+            elif kind == "checkbox":
+                widget.configure(
+                    fg_color=c["accent"], hover_color=c["accent_hover"], border_color=c["border"], text_color=c["text"]
+                )
+            elif kind == "segmented":
+                widget.configure(
+                    fg_color=c["input"],
+                    selected_color=c["accent"],
+                    selected_hover_color=c["accent_hover"],
+                    unselected_color=c["input"],
+                    unselected_hover_color=c["border"],
+                    text_color=c["text"],
+                )
+            elif kind == "accent_button":
+                widget.configure(fg_color=c["accent"], hover_color=c["accent_hover"], text_color=c["accent_text"])
+            elif kind == "danger_button":
+                widget.configure(fg_color=c["danger"], hover_color=c["danger_hover"], text_color="#ffffff")
+            elif kind == "progress":
+                widget.configure(fg_color=c["input"], progress_color=c["accent"])
+            elif kind in ("file_row", "log_console"):
+                widget.apply_theme(c)
+
+    def _on_theme_change(self, value: str) -> None:
+        self.theme = "dark" if value == "Тёмная" else "light"
+        self.colors = THEMES[self.theme]
+        ctk.set_appearance_mode(self.theme)
+        self._apply_theme()
+
     # ------------------------------------------------------------------ UI
 
-    def _card(self, parent, title: str) -> ctk.CTkFrame:
-        card = ctk.CTkFrame(parent, fg_color=COLOR_CARD, corner_radius=16, border_width=1, border_color=COLOR_BORDER)
-        card.grid_columnconfigure(0, weight=1)
-        header = ctk.CTkLabel(
-            card,
-            text=title,
-            text_color=COLOR_TEXT_MUTED,
+    def _make_segmented(self, parent, values: List[str], variable, command=None) -> ctk.CTkSegmentedButton:
+        seg = ctk.CTkSegmentedButton(
+            parent,
+            values=values,
+            variable=variable,
+            command=command,
+            height=36,
+            corner_radius=10,
             font=ctk.CTkFont(size=13, weight="bold"),
-            anchor="w",
         )
+        return self._reg(seg, "segmented")
+
+    def _card(self, parent, title: str) -> ctk.CTkFrame:
+        card = ctk.CTkFrame(parent, corner_radius=16, border_width=1)
+        self._reg(card, "card")
+        card.grid_columnconfigure(0, weight=1)
+        header = ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=13, weight="bold"), anchor="w")
+        self._reg(header, "muted")
         header.grid(row=0, column=0, sticky="w", padx=16, pady=(14, 6))
         return card
 
+    def _build_topbar(self) -> None:
+        topbar = ctk.CTkFrame(self, fg_color="transparent")
+        topbar.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 0))
+        topbar.grid_columnconfigure(0, weight=1)
+
+        theme_label = ctk.CTkLabel(topbar, text="Тема:")
+        self._reg(theme_label, "label")
+        theme_label.grid(row=0, column=1, padx=(0, 8))
+
+        self.theme_var = ctk.StringVar(value="Тёмная")
+        self._make_segmented(
+            topbar, ["Тёмная", "Светлая"], self.theme_var, command=self._on_theme_change
+        ).grid(row=0, column=2)
+
     def _build_content(self) -> None:
         wrapper = ctk.CTkFrame(self, fg_color="transparent")
-        wrapper.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
+        wrapper.grid(row=1, column=0, sticky="ew", padx=12, pady=(10, 6))
         wrapper.grid_columnconfigure(0, weight=1)
 
         # --- "Основное" card ----------------------------------------------
@@ -415,77 +499,62 @@ class App(ctk.CTk):
         self.script_row = FilePathRow(
             card_general, "Скрипт (.py):", PY_FILETYPES, on_change=self._on_script_change
         )
+        self._reg(self.script_row, "file_row")
         self.script_row.grid(row=1, column=0, sticky="ew", padx=16, pady=4)
 
         output_name_row = ctk.CTkFrame(card_general, fg_color="transparent")
         output_name_row.grid(row=2, column=0, sticky="ew", padx=16, pady=4)
         output_name_row.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(output_name_row, text="Имя EXE:", width=110, anchor="w", text_color=COLOR_TEXT).grid(
-            row=0, column=0
-        )
-        self.output_name_entry = ctk.CTkEntry(
-            output_name_row, placeholder_text="MyApp (без расширения)", **ENTRY_STYLE
-        )
+        name_label = ctk.CTkLabel(output_name_row, text="Имя EXE:", width=110, anchor="w")
+        self._reg(name_label, "label")
+        name_label.grid(row=0, column=0)
+        self.output_name_entry = ctk.CTkEntry(output_name_row, placeholder_text="MyApp (без расширения)")
+        self._reg(self.output_name_entry, "input")
         self.output_name_entry.grid(row=0, column=1, sticky="ew")
 
         self.icon_row = FilePathRow(card_general, "Иконка (.ico):", ICO_FILETYPES)
+        self._reg(self.icon_row, "file_row")
         self.icon_row.grid(row=3, column=0, sticky="ew", padx=16, pady=4)
 
         self.output_dir_row = FilePathRow(card_general, "Папка вывода:", [], pick_folder=True)
         self.output_dir_row.set("dist")
+        self._reg(self.output_dir_row, "file_row")
         self.output_dir_row.grid(row=4, column=0, sticky="ew", padx=16, pady=4)
 
         options_row = ctk.CTkFrame(card_general, fg_color="transparent")
         options_row.grid(row=5, column=0, sticky="ew", padx=16, pady=(10, 16))
 
-        ctk.CTkLabel(options_row, text="Тип сборки:", text_color=COLOR_TEXT).grid(row=0, column=0, padx=(0, 8))
+        type_label = ctk.CTkLabel(options_row, text="Тип сборки:")
+        self._reg(type_label, "label")
+        type_label.grid(row=0, column=0, padx=(0, 8))
         self.build_type_var = ctk.StringVar(value="Onefile")
-        ctk.CTkSegmentedButton(
-            options_row,
-            values=["Onefile", "Onedir"],
-            variable=self.build_type_var,
-            fg_color=COLOR_INPUT,
-            selected_color=COLOR_ACCENT,
-            selected_hover_color=COLOR_ACCENT_HOVER,
-            unselected_color=COLOR_INPUT,
-            unselected_hover_color=COLOR_BORDER,
-            text_color=COLOR_TEXT,
-        ).grid(row=0, column=1, padx=(0, 20))
+        self._make_segmented(options_row, ["Onefile", "Onedir"], self.build_type_var).grid(
+            row=0, column=1, padx=(0, 20)
+        )
 
         self.hide_console_var = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(
-            options_row,
-            text="Скрыть окно консоли",
-            variable=self.hide_console_var,
-            fg_color=COLOR_ACCENT,
-            hover_color=COLOR_ACCENT_HOVER,
-            border_color=COLOR_BORDER,
-            text_color=COLOR_TEXT,
-        ).grid(row=0, column=2, padx=(0, 20))
+        hide_console_cb = ctk.CTkCheckBox(options_row, text="Скрыть окно консоли", variable=self.hide_console_var)
+        self._reg(hide_console_cb, "checkbox")
+        hide_console_cb.grid(row=0, column=2, padx=(0, 20))
 
         self.admin_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(
-            options_row,
-            text="Требовать права администратора",
-            variable=self.admin_var,
-            fg_color=COLOR_ACCENT,
-            hover_color=COLOR_ACCENT_HOVER,
-            border_color=COLOR_BORDER,
-            text_color=COLOR_TEXT,
-        ).grid(row=0, column=3)
+        admin_cb = ctk.CTkCheckBox(options_row, text="Требовать права администратора", variable=self.admin_var)
+        self._reg(admin_cb, "checkbox")
+        admin_cb.grid(row=0, column=3)
 
         # --- "Метаданные" card ----------------------------------------------
         card_meta = self._card(wrapper, "Метаданные")
         card_meta.grid(row=1, column=0, sticky="ew")
         card_meta.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(
+        meta_hint = ctk.CTkLabel(
             card_meta,
             text="Эти данные отображаются во вкладке «Подробности» свойств EXE в Windows.",
             wraplength=600,
             justify="left",
-            text_color=COLOR_TEXT_MUTED,
-        ).grid(row=1, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 10))
+        )
+        self._reg(meta_hint, "muted")
+        meta_hint.grid(row=1, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 10))
 
         self.version_entry = self._meta_field(card_meta, 2, "Версия:", "1.0.0.0")
         self.product_name_entry = self._meta_field(card_meta, 3, "Имя продукта:", "")
@@ -493,53 +562,45 @@ class App(ctk.CTk):
         self.description_entry = self._meta_field(card_meta, 5, "Описание:", "", pady_bottom=16)
 
     def _meta_field(self, parent, row: int, label: str, placeholder: str, pady_bottom: int = 4) -> ctk.CTkEntry:
-        ctk.CTkLabel(parent, text=label, width=130, anchor="w", text_color=COLOR_TEXT).grid(
-            row=row, column=0, sticky="w", padx=16, pady=(4, pady_bottom)
-        )
-        entry = ctk.CTkEntry(parent, placeholder_text=placeholder, **ENTRY_STYLE)
+        lbl = ctk.CTkLabel(parent, text=label, width=130, anchor="w")
+        self._reg(lbl, "label")
+        lbl.grid(row=row, column=0, sticky="w", padx=16, pady=(4, pady_bottom))
+        entry = ctk.CTkEntry(parent, placeholder_text=placeholder)
+        self._reg(entry, "input")
         entry.grid(row=row, column=1, sticky="ew", padx=(0, 16), pady=(4, pady_bottom))
         return entry
 
     def _build_action_bar(self) -> None:
         action_bar = ctk.CTkFrame(self, fg_color="transparent")
-        action_bar.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 6))
-        action_bar.grid_columnconfigure(2, weight=1)
+        action_bar.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 6))
+        action_bar.grid_columnconfigure(3, weight=1)
 
-        self.build_btn = ctk.CTkButton(
-            action_bar,
-            text="Собрать EXE",
-            command=self._start_build,
-            height=36,
-            width=140,
-            fg_color=COLOR_ACCENT,
-            hover_color=COLOR_ACCENT_HOVER,
-            text_color="#0b1210",
-        )
+        self.build_btn = ctk.CTkButton(action_bar, text="Собрать EXE", command=self._start_build, height=36, width=140)
+        self._reg(self.build_btn, "accent_button")
         self.build_btn.grid(row=0, column=0)
 
+        self.clear_btn = ctk.CTkButton(action_bar, text="Очистить", command=self._clear_form, height=36, width=100)
+        self._reg(self.clear_btn, "danger_button")
+        self.clear_btn.grid(row=0, column=1, padx=(8, 0))
+
         self.cancel_btn = ctk.CTkButton(
-            action_bar,
-            text="Отмена",
-            command=self._cancel_build,
-            height=36,
-            width=100,
-            state="disabled",
-            fg_color=COLOR_DANGER,
-            hover_color=COLOR_DANGER_HOVER,
+            action_bar, text="Отмена", command=self._cancel_build, height=36, width=100, state="disabled"
         )
-        self.cancel_btn.grid(row=0, column=1, padx=(8, 0))
+        self._reg(self.cancel_btn, "danger_button")
+        self.cancel_btn.grid(row=0, column=2, padx=(8, 0))
 
-        self.progress_bar = ctk.CTkProgressBar(
-            action_bar, mode="indeterminate", fg_color=COLOR_INPUT, progress_color=COLOR_ACCENT
-        )
-        self.progress_bar.grid(row=0, column=2, sticky="ew", padx=16)
+        self.progress_bar = ctk.CTkProgressBar(action_bar, mode="indeterminate")
+        self._reg(self.progress_bar, "progress")
+        self.progress_bar.grid(row=0, column=3, sticky="ew", padx=16)
 
-        self.status_label = ctk.CTkLabel(action_bar, text="Готово к сборке", anchor="e", text_color=COLOR_TEXT_MUTED)
-        self.status_label.grid(row=0, column=3)
+        self.status_label = ctk.CTkLabel(action_bar, text="Готово к сборке", anchor="e")
+        self._reg(self.status_label, "muted")
+        self.status_label.grid(row=0, column=4)
 
     def _build_log_console(self) -> None:
         self.log_console = LogConsole(self)
-        self.log_console.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        self._reg(self.log_console, "log_console")
+        self.log_console.grid(row=3, column=0, sticky="nsew", padx=12, pady=(0, 12))
 
     # ------------------------------------------------------------- helpers
 
@@ -571,6 +632,23 @@ class App(ctk.CTk):
             product_name=self.product_name_entry.get().strip(),
         )
 
+    def _clear_form(self) -> None:
+        default = BuildConfig()
+        self.script_row.set(default.script_path)
+        self.output_name_entry.delete(0, "end")
+        self.icon_row.set(default.icon_path)
+        self.output_dir_row.set(default.output_dir)
+        self.build_type_var.set("Onefile" if default.onefile else "Onedir")
+        self.hide_console_var.set(default.hide_console)
+        self.admin_var.set(default.admin_rights)
+        self.version_entry.delete(0, "end")
+        self.version_entry.insert(0, default.version)
+        self.product_name_entry.delete(0, "end")
+        self.author_entry.delete(0, "end")
+        self.description_entry.delete(0, "end")
+        self.log_console.clear()
+        self.status_label.configure(text="Готово к сборке")
+
     # -------------------------------------------------------------- build
 
     def _start_build(self) -> None:
@@ -582,6 +660,7 @@ class App(ctk.CTk):
 
         self.log_console.clear()
         self.build_btn.configure(state="disabled")
+        self.clear_btn.configure(state="disabled")
         self.cancel_btn.configure(state="normal")
         self.status_label.configure(text="Идёт сборка...")
         self.progress_bar.start()
@@ -615,6 +694,7 @@ class App(ctk.CTk):
             self.progress_bar.stop()
             self.progress_bar.set(0)
             self.build_btn.configure(state="normal")
+            self.clear_btn.configure(state="normal")
             self.cancel_btn.configure(state="disabled")
             if code == 0:
                 self.status_label.configure(text="Сборка успешно завершена")
