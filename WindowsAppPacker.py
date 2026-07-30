@@ -321,6 +321,7 @@ class App(ctk.CTk):
         self._log_queue: "queue.Queue[str]" = queue.Queue()
         self._done_queue: "queue.Queue[int]" = queue.Queue()
         self._milestone_idx = 0
+        self._log_expanded = True
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(3, weight=1)
@@ -334,14 +335,20 @@ class App(ctk.CTk):
         self._check_pyinstaller()
         self._poll_queues()
 
-        # Size the window exactly to its content instead of a guessed
-        # constant, and use that as the real floor for manual resizing — a
-        # hardcoded minsize taller than actually needed is what made
-        # shrinking the window feel "stuck" before.
+        # Measure the window's natural size both with and without the log
+        # panel instead of guessing constants — the expanded size becomes
+        # the starting geometry, and the collapsed size becomes minsize()
+        # (a hardcoded minsize taller than actually needed is what made
+        # shrinking the window feel "stuck" before).
         self.update_idletasks()
-        natural_height = self.winfo_reqheight()
-        self.geometry(f"{WINDOW_WIDTH}x{natural_height}")
-        self.minsize(760, natural_height)
+        self._expanded_height = self.winfo_reqheight()
+        self._apply_log_layout(False)
+        self.update_idletasks()
+        self._collapsed_height = self.winfo_reqheight()
+        self._apply_log_layout(True)
+
+        self.geometry(f"{WINDOW_WIDTH}x{self._expanded_height}")
+        self.minsize(760, self._collapsed_height)
 
     # ------------------------------------------------------------- theming
 
@@ -380,6 +387,8 @@ class App(ctk.CTk):
                 widget.configure(fg_color=c["danger"], hover_color=c["danger_hover"], text_color="#ffffff")
             elif kind == "progress":
                 widget.configure(fg_color=c["input"], progress_color=c["accent"])
+            elif kind == "log_toggle":
+                widget.configure(hover_color=c["input"], text_color=c["text"])
             elif kind in ("file_row", "log_console"):
                 widget.apply_theme(c)
 
@@ -415,7 +424,7 @@ class App(ctk.CTk):
         card.grid_columnconfigure(0, weight=1)
         header = ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=13, weight="bold"), anchor="w")
         self._reg(header, "muted")
-        header.grid(row=0, column=0, sticky="w", padx=16, pady=(14, 6))
+        header.grid(row=0, column=0, sticky="w", padx=16, pady=(8, 6))
         return card
 
     def _build_topbar(self) -> None:
@@ -482,7 +491,8 @@ class App(ctk.CTk):
         self.output_dir_row.grid(row=4, column=0, sticky="ew", padx=16, pady=4)
 
         options_row = ctk.CTkFrame(card_general, fg_color="transparent")
-        options_row.grid(row=5, column=0, sticky="ew", padx=16, pady=(10, 6))
+        options_row.grid(row=5, column=0, sticky="ew", padx=16, pady=(10, 16))
+        options_row.grid_columnconfigure(2, weight=1)
 
         self.hide_console_var = ctk.BooleanVar(value=True)
         hide_console_cb = ctk.CTkCheckBox(options_row, text="Скрыть консоль (cmd)", variable=self.hide_console_var)
@@ -497,10 +507,10 @@ class App(ctk.CTk):
         admin_cb.grid(row=0, column=1)
 
         self.clear_general_btn = ctk.CTkButton(
-            card_general, text="Очистить", command=self._clear_general, height=32, width=110
+            options_row, text="Очистить", command=self._clear_general, height=32, width=110
         )
         self._reg(self.clear_general_btn, "danger_button")
-        self.clear_general_btn.grid(row=6, column=0, sticky="e", padx=16, pady=(0, 16))
+        self.clear_general_btn.grid(row=0, column=2, sticky="e")
 
     def _build_action_bar(self) -> None:
         action_bar = ctk.CTkFrame(self, fg_color="transparent")
@@ -527,30 +537,54 @@ class App(ctk.CTk):
         self.status_label.grid(row=0, column=3)
 
     def _build_log_console(self) -> None:
-        card = ctk.CTkFrame(self, corner_radius=16, border_width=1)
-        self._reg(card, "card")
-        card.grid(row=3, column=0, sticky="nsew", padx=12, pady=(0, 12))
-        card.grid_columnconfigure(0, weight=1)
-        card.grid_rowconfigure(1, weight=1)
+        self.log_card = ctk.CTkFrame(self, corner_radius=16, border_width=1)
+        self._reg(self.log_card, "card")
+        self.log_card.grid(row=3, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        self.log_card.grid_columnconfigure(0, weight=1)
+        self.log_card.grid_rowconfigure(1, weight=1)
 
-        header_row = ctk.CTkFrame(card, fg_color="transparent")
-        header_row.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 6))
+        header_row = ctk.CTkFrame(self.log_card, fg_color="transparent")
+        header_row.grid(row=0, column=0, sticky="ew", padx=16, pady=(8, 6))
         header_row.grid_columnconfigure(0, weight=1)
 
         title_label = ctk.CTkLabel(header_row, text="Журнал", font=ctk.CTkFont(size=13, weight="bold"), anchor="w")
         self._reg(title_label, "muted")
         title_label.grid(row=0, column=0, sticky="w")
 
-        clear_log_btn = ctk.CTkButton(header_row, text="Очистить", command=self._clear_log, height=24, width=90)
-        self._reg(clear_log_btn, "danger_button")
-        clear_log_btn.grid(row=0, column=1, sticky="e")
+        self.log_toggle_btn = ctk.CTkButton(
+            header_row,
+            text="⌃",
+            command=self._toggle_log,
+            width=28,
+            height=24,
+            fg_color="transparent",
+        )
+        self._reg(self.log_toggle_btn, "log_toggle")
+        self.log_toggle_btn.grid(row=0, column=1, sticky="e")
 
-        self.log_console = LogConsole(card, height=100, fg_color="transparent", border_width=0, corner_radius=0)
+        self.log_console = LogConsole(self.log_card, height=100, fg_color="transparent", border_width=0, corner_radius=0)
         self._reg(self.log_console, "log_console")
         self.log_console.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
 
-    def _clear_log(self) -> None:
-        self.log_console.clear()
+    def _toggle_log(self) -> None:
+        self._set_log_expanded(not self._log_expanded)
+
+    def _apply_log_layout(self, expanded: bool) -> None:
+        self._log_expanded = expanded
+        self.log_toggle_btn.configure(text="⌃" if expanded else "⌄")
+        if expanded:
+            self.log_console.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
+            self.log_card.grid_rowconfigure(1, weight=1)
+            self.grid_rowconfigure(3, weight=1)
+        else:
+            self.log_console.grid_remove()
+            self.log_card.grid_rowconfigure(1, weight=0)
+            self.grid_rowconfigure(3, weight=0)
+
+    def _set_log_expanded(self, expanded: bool) -> None:
+        self._apply_log_layout(expanded)
+        target_height = self._expanded_height if expanded else self._collapsed_height
+        self.geometry(f"{self.winfo_width()}x{target_height}")
 
     # ------------------------------------------------------------- helpers
 
