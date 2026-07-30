@@ -30,7 +30,7 @@ pip install tkinterdnd2
 ## Запуск
 
 ```bash
-python main.py
+python WindowsAppPacker.py
 ```
 
 ## Использование
@@ -50,14 +50,6 @@ python main.py
 
 ## Структура проекта
 
-```
-main.py                     # точка входа
-core/
-  build_config.py           # модель настроек сборки
-  pyinstaller_builder.py    # построение команды PyInstaller и запуск процесса сборки
-  version_info.py           # генерация файла версии (метаданные EXE)
-  presets.py                # сохранение/загрузка пресетов (~/.windowsapppacker/presets)
-ui/
-  app.py                    # главное окно приложения (CustomTkinter)
-  widgets.py                # переиспользуемые виджеты (выбор файлов, список данных, лог)
-```
+Весь проект — один файл `WindowsAppPacker.py`: модель настроек сборки,
+построение команды PyInstaller и запуск сборки в отдельном потоке,
+генерация файла версии, пресеты и весь GUI на CustomTkinter.
