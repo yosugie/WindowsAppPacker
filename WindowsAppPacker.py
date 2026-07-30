@@ -363,7 +363,7 @@ class App(ctk.CTk):
         self._log_queue: "queue.Queue[str]" = queue.Queue()
         self._done_queue: "queue.Queue[int]" = queue.Queue()
         self._milestone_idx = 0
-        self._log_expanded = False
+        self._log_expanded = True
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(3, weight=1)
@@ -378,17 +378,18 @@ class App(ctk.CTk):
         self._poll_queues()
 
         # Measure the window's natural size both with and without the log
-        # panel instead of guessing constants — the collapsed size is both
-        # the starting geometry (log starts hidden) and minsize() (a
-        # hardcoded minsize taller than actually needed is what made
-        # shrinking the window feel "stuck" before).
+        # panel instead of guessing constants — the expanded size becomes
+        # the starting geometry (log starts open), and the collapsed size
+        # becomes minsize() (a hardcoded minsize taller than actually
+        # needed is what made shrinking the window feel "stuck" before).
         self.update_idletasks()
         self._expanded_height = self.winfo_reqheight()
         self._apply_log_layout(False)
         self.update_idletasks()
         self._collapsed_height = self.winfo_reqheight()
+        self._apply_log_layout(True)
 
-        self.geometry(f"{WINDOW_WIDTH}x{self._collapsed_height}")
+        self.geometry(f"{WINDOW_WIDTH}x{self._expanded_height}")
         self.minsize(760, self._collapsed_height)
 
     # ------------------------------------------------------------- theming
