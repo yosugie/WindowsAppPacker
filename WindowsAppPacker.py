@@ -382,14 +382,16 @@ class LogConsole(ctk.CTkTextbox):
         kwargs.setdefault("border_width", 1)
         kwargs.setdefault("corner_radius", 16)
         super().__init__(master, **kwargs)
+        self.tag_config("success", foreground="#22c55e")
+        self.tag_config("error", foreground="#ef4444")
         self.configure(state="disabled")
 
     def apply_theme(self, colors: dict) -> None:
         self.configure(fg_color=colors["card"], text_color=colors["text"], border_color=colors["border"])
 
-    def write(self, text: str) -> None:
+    def write(self, text: str, tag: Optional[str] = None) -> None:
         self.configure(state="normal")
-        self.insert("end", text)
+        self.insert("end", text, tag)
         self.see("end")
         self.configure(state="disabled")
 
@@ -404,12 +406,15 @@ class LogConsole(ctk.CTkTextbox):
 # --------------------------------------------------------------------------
 
 
+WINDOW_WIDTH = 940
+LOG_PANEL_HEIGHT = 260
+
+
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("WindowsAppPacker — упаковщик Python в EXE")
-        self.geometry("900x740")
-        self.minsize(760, 600)
+        self.geometry(f"{WINDOW_WIDTH}x600")
 
         self.theme = "dark"
         self.colors = THEMES[self.theme]
@@ -419,9 +424,10 @@ class App(ctk.CTk):
         self._log_queue: "queue.Queue[str]" = queue.Queue()
         self._done_queue: "queue.Queue[int]" = queue.Queue()
         self._milestone_idx = 0
+        self._log_expanded = False
+        self._log_animation_job: Optional[str] = None
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)
 
         self._build_topbar()
         self._build_content()
@@ -431,6 +437,16 @@ class App(ctk.CTk):
         self._apply_theme()
         self._check_pyinstaller()
         self._poll_queues()
+
+        # Size the window exactly to its collapsed content (log panel hidden)
+        # instead of a guessed constant, and use that as the real floor for
+        # manual resizing — a hardcoded minsize taller than actually needed
+        # is what made shrinking the window feel "stuck" before.
+        self.update_idletasks()
+        self._collapsed_height = self.winfo_reqheight()
+        self._expanded_height = self._collapsed_height + LOG_PANEL_HEIGHT
+        self.geometry(f"{WINDOW_WIDTH}x{self._collapsed_height}")
+        self.minsize(760, self._collapsed_height)
 
     # ------------------------------------------------------------- theming
 
@@ -469,6 +485,8 @@ class App(ctk.CTk):
                 widget.configure(fg_color=c["danger"], hover_color=c["danger_hover"], text_color="#ffffff")
             elif kind == "progress":
                 widget.configure(fg_color=c["input"], progress_color=c["accent"])
+            elif kind == "log_toggle":
+                widget.configure(hover_color=c["input"], text_color=c["text"])
             elif kind in ("file_row", "log_console"):
                 widget.apply_theme(c)
 
@@ -600,6 +618,11 @@ class App(ctk.CTk):
         self.version_entry = self._meta_field(
             card_meta, 1, "Версия:", "1.0.0.0", validate="key", validatecommand=version_vcmd
         )
+        # Russian keyboard layouts (and the numpad decimal key under a
+        # Russian locale) commonly produce "," where a "." is meant — this
+        # rewrites the keystroke before validate="key" ever sees a comma,
+        # rather than requiring the user to switch layout mid-field.
+        self.version_entry._entry.bind("<KeyPress>", self._on_version_keypress)
         self.product_name_entry = self._meta_field(card_meta, 2, "Имя продукта:", "")
         self.author_entry = self._meta_field(card_meta, 3, "Автор/компания:", "")
         self.description_entry = self._meta_field(card_meta, 4, "Описание:", "")
@@ -626,6 +649,13 @@ class App(ctk.CTk):
             return True
         return bool(_VERSION_INPUT_RE.fullmatch(proposed))
 
+    def _on_version_keypress(self, event) -> Optional[str]:
+        if event.char == ",":
+            entry = self.version_entry._entry
+            self.version_entry.insert(entry.index("insert"), ".")
+            return "break"
+        return None
+
     def _build_action_bar(self) -> None:
         action_bar = ctk.CTkFrame(self, fg_color="transparent")
         action_bar.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 6))
@@ -651,9 +681,83 @@ class App(ctk.CTk):
         self.status_label.grid(row=0, column=3)
 
     def _build_log_console(self) -> None:
-        self.log_console = LogConsole(self)
+        section = ctk.CTkFrame(self, fg_color="transparent")
+        section.grid(row=3, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        section.grid_columnconfigure(0, weight=1)
+        self._log_section = section
+
+        header = ctk.CTkFrame(section, corner_radius=16, border_width=1)
+        self._reg(header, "card")
+        header.grid(row=0, column=0, sticky="ew")
+        header.grid_columnconfigure(0, weight=1)
+
+        self.log_toggle_btn = ctk.CTkButton(
+            header,
+            text="Журнал  ⌄",
+            command=self._toggle_log,
+            height=32,
+            fg_color="transparent",
+            anchor="w",
+        )
+        self._reg(self.log_toggle_btn, "log_toggle")
+        self.log_toggle_btn.grid(row=0, column=0, sticky="ew", padx=8, pady=4)
+
+        self.log_console = LogConsole(section)
         self._reg(self.log_console, "log_console")
-        self.log_console.grid(row=3, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        # Not gridded yet — the log panel starts collapsed (see __init__).
+
+    def _toggle_log(self) -> None:
+        self._set_log_expanded(not self._log_expanded)
+
+    def _set_log_expanded(self, expanded: bool) -> None:
+        if expanded == self._log_expanded:
+            return
+        self._log_expanded = expanded
+        self.log_toggle_btn.configure(text=f"Журнал  {'⌃' if expanded else '⌄'}")
+
+        if expanded:
+            self.log_console.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+            self._log_section.grid_rowconfigure(1, weight=1)
+            self.grid_rowconfigure(3, weight=1)
+            self._animate_height(self._expanded_height)
+        else:
+            self.grid_rowconfigure(3, weight=0)
+            self._animate_height(self._collapsed_height, on_done=self._finish_collapse)
+
+    def _finish_collapse(self) -> None:
+        self.log_console.grid_remove()
+        self._log_section.grid_rowconfigure(1, weight=0)
+
+    def _animate_height(self, target_height: int, steps: int = 14, on_done: Optional[Callable[[], None]] = None) -> None:
+        if self._log_animation_job is not None:
+            self.after_cancel(self._log_animation_job)
+            self._log_animation_job = None
+
+        start_height = self.winfo_height()
+        width = self.winfo_width()
+        delta = target_height - start_height
+        if delta == 0:
+            if on_done:
+                on_done()
+            return
+
+        step_count = 0
+
+        def step():
+            nonlocal step_count
+            step_count += 1
+            progress = 1 - (1 - step_count / steps) ** 2  # ease-out
+            height = int(start_height + delta * progress)
+            self.geometry(f"{width}x{height}")
+            if step_count < steps:
+                self._log_animation_job = self.after(12, step)
+            else:
+                self.geometry(f"{width}x{target_height}")
+                self._log_animation_job = None
+                if on_done:
+                    on_done()
+
+        step()
 
     # ------------------------------------------------------------- helpers
 
@@ -722,6 +826,7 @@ class App(ctk.CTk):
         self.clear_meta_btn.configure(state="disabled")
         self.cancel_btn.configure(state="normal")
         self.status_label.configure(text="Идёт сборка... 0%")
+        self._set_log_expanded(True)
 
         self._build_job = BuildJob(
             cfg,
@@ -766,8 +871,15 @@ class App(ctk.CTk):
             if code == 0:
                 self.progress_bar.set(1.0)
                 self.status_label.configure(text="Сборка успешно завершена")
+                self.log_console.write(
+                    "\n✅ Сборка успешно завершена! Программа упакована.\n", tag="success"
+                )
             else:
                 self.status_label.configure(text=f"Сборка завершилась с ошибкой (код {code})")
+                self.log_console.write(
+                    f"\n❌ Сборка завершилась с ошибкой (код {code}). Подробности — в логе выше.\n",
+                    tag="error",
+                )
             self._build_job = None
 
         self.after(150, self._poll_queues)
