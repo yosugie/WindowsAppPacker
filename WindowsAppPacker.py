@@ -322,7 +322,7 @@ class FilePathRow(ctk.CTkFrame):
 
         self.grid_columnconfigure(1, weight=1)
 
-        self.label = ctk.CTkLabel(self, text=label, width=110, anchor="w")
+        self.label = ctk.CTkLabel(self, text=label, width=LABEL_WIDTH, anchor="w")
         self.label.grid(row=0, column=0, padx=(0, 8), sticky="w")
 
         self.entry = ctk.CTkEntry(self, placeholder_text=placeholder)
@@ -407,6 +407,7 @@ class LogConsole(ctk.CTkTextbox):
 
 
 WINDOW_WIDTH = 1000
+LABEL_WIDTH = 110  # fits the longest label ("Автор/компания:") with little slack
 
 
 class App(ctk.CTk):
@@ -423,6 +424,7 @@ class App(ctk.CTk):
         self._log_queue: "queue.Queue[str]" = queue.Queue()
         self._done_queue: "queue.Queue[int]" = queue.Queue()
         self._milestone_idx = 0
+        self._product_name_auto = True
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(3, weight=1)
@@ -562,12 +564,13 @@ class App(ctk.CTk):
         output_name_row = ctk.CTkFrame(card_general, fg_color="transparent")
         output_name_row.grid(row=2, column=0, sticky="ew", padx=16, pady=4)
         output_name_row.grid_columnconfigure(1, weight=1)
-        name_label = ctk.CTkLabel(output_name_row, text="Имя EXE:", width=110, anchor="w")
+        name_label = ctk.CTkLabel(output_name_row, text="Имя EXE:", width=LABEL_WIDTH, anchor="w")
         self._reg(name_label, "label")
         name_label.grid(row=0, column=0, padx=(0, 8))
         self.output_name_entry = ctk.CTkEntry(output_name_row, placeholder_text="MyApp (без расширения)")
         self._reg(self.output_name_entry, "input")
         self.output_name_entry.grid(row=0, column=1, sticky="ew")
+        self.output_name_entry.bind("<KeyRelease>", lambda _e: self._sync_product_name())
         name_spacer = ctk.CTkLabel(output_name_row, text="", width=90, fg_color="transparent")
         name_spacer.grid(row=0, column=2, padx=(8, 0))
 
@@ -618,6 +621,7 @@ class App(ctk.CTk):
         # rather than requiring the user to switch layout mid-field.
         self.version_entry._entry.bind("<KeyPress>", self._on_version_keypress)
         self.product_name_entry = self._meta_field(card_meta, 2, "Имя продукта:", "")
+        self.product_name_entry.bind("<KeyRelease>", lambda _e: self._on_product_name_typed())
         self.author_entry = self._meta_field(card_meta, 3, "Автор/компания:", "")
         self.description_entry = self._meta_field(card_meta, 4, "Описание:", "")
 
@@ -628,14 +632,13 @@ class App(ctk.CTk):
         self.clear_meta_btn.grid(row=5, column=0, sticky="e", padx=16, pady=(6, 16))
 
     def _meta_field(self, parent, row: int, label: str, placeholder: str, **entry_kwargs) -> ctk.CTkEntry:
-        # A row of its own (rather than a shared card-wide column) so a short
-        # label like "Версия:" doesn't leave a big gap before its entry just
-        # because another row's label ("Автор/компания:") is much longer.
+        # Own row with the same fixed LABEL_WIDTH used in "Основное", so
+        # entries in both cards start at the same x position.
         row_frame = ctk.CTkFrame(parent, fg_color="transparent")
         row_frame.grid(row=row, column=0, sticky="ew", padx=16, pady=4)
         row_frame.grid_columnconfigure(1, weight=1)
 
-        lbl = ctk.CTkLabel(row_frame, text=label, anchor="w")
+        lbl = ctk.CTkLabel(row_frame, text=label, width=LABEL_WIDTH, anchor="w")
         self._reg(lbl, "label")
         lbl.grid(row=0, column=0, padx=(0, 8), sticky="w")
 
@@ -658,7 +661,7 @@ class App(ctk.CTk):
 
     def _build_action_bar(self) -> None:
         action_bar = ctk.CTkFrame(self, fg_color="transparent")
-        action_bar.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 6))
+        action_bar.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 10))
         action_bar.grid_columnconfigure(2, weight=1)
 
         self.build_btn = ctk.CTkButton(action_bar, text="Собрать EXE", command=self._start_build, height=36, width=140)
@@ -681,13 +684,30 @@ class App(ctk.CTk):
         self.status_label.grid(row=0, column=3)
 
     def _build_log_console(self) -> None:
-        card = self._card(self, "Журнал")
+        card = ctk.CTkFrame(self, corner_radius=16, border_width=1)
+        self._reg(card, "card")
         card.grid(row=3, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        card.grid_columnconfigure(0, weight=1)
         card.grid_rowconfigure(1, weight=1)
 
-        self.log_console = LogConsole(card, height=200, fg_color="transparent", border_width=0, corner_radius=0)
+        header_row = ctk.CTkFrame(card, fg_color="transparent")
+        header_row.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 6))
+        header_row.grid_columnconfigure(0, weight=1)
+
+        title_label = ctk.CTkLabel(header_row, text="Журнал", font=ctk.CTkFont(size=13, weight="bold"), anchor="w")
+        self._reg(title_label, "muted")
+        title_label.grid(row=0, column=0, sticky="w")
+
+        clear_log_btn = ctk.CTkButton(header_row, text="Очистить", command=self._clear_log, height=24, width=90)
+        self._reg(clear_log_btn, "danger_button")
+        clear_log_btn.grid(row=0, column=1, sticky="e")
+
+        self.log_console = LogConsole(card, height=100, fg_color="transparent", border_width=0, corner_radius=0)
         self._reg(self.log_console, "log_console")
-        self.log_console.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        self.log_console.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
+
+    def _clear_log(self) -> None:
+        self.log_console.clear()
 
     # ------------------------------------------------------------- helpers
 
@@ -707,6 +727,18 @@ class App(ctk.CTk):
             self.output_name_entry.insert(0, name)
         if not self.output_dir_row.get():
             self.output_dir_row.set(os.path.dirname(os.path.abspath(path)))
+
+    def _sync_product_name(self) -> None:
+        # Mirrors "Имя EXE" into "Имя продукта" on every keystroke until the
+        # user types into "Имя продукта" themselves — a one-time "if empty"
+        # copy would only catch the first character, since after that the
+        # field is no longer empty and the mirror would stop right there.
+        if self._product_name_auto:
+            self.product_name_entry.delete(0, "end")
+            self.product_name_entry.insert(0, self.output_name_entry.get().strip())
+
+    def _on_product_name_typed(self) -> None:
+        self._product_name_auto = False
 
     def _collect_config(self) -> BuildConfig:
         return BuildConfig(
@@ -738,6 +770,7 @@ class App(ctk.CTk):
         _clear_entry(self.product_name_entry)
         _clear_entry(self.author_entry)
         _clear_entry(self.description_entry)
+        self._product_name_auto = True
 
     # -------------------------------------------------------------- build
 
