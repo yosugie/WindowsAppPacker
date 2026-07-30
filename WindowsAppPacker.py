@@ -226,7 +226,7 @@ class FilePathRow(ctk.CTkFrame):
         self.entry.grid(row=0, column=1, sticky="ew")
         self.entry.bind("<KeyRelease>", lambda _e: self._notify())
 
-        self.browse_btn = ctk.CTkButton(self, text="Обзор...", width=90, command=self._browse, corner_radius=10)
+        self.browse_btn = ctk.CTkButton(self, text="Обзор...", width=90, command=self._browse, corner_radius=20)
         self.browse_btn.grid(row=0, column=2, padx=(8, 0))
 
         if DND_AVAILABLE:
@@ -418,7 +418,7 @@ class App(ctk.CTk):
         theme_label.grid(row=0, column=2, padx=(0, 8))
 
         self.theme_toggle_btn = ctk.CTkButton(
-            topbar, text="Тёмная", command=self._toggle_theme, height=32, width=100, corner_radius=10
+            topbar, text="Тёмная", command=self._toggle_theme, height=32, width=100, corner_radius=20
         )
         self._reg(self.theme_toggle_btn, "accent_button")
         self.theme_toggle_btn.grid(row=0, column=3)
@@ -485,7 +485,7 @@ class App(ctk.CTk):
         admin_cb.grid(row=0, column=1)
 
         self.clear_general_btn = ctk.CTkButton(
-            options_row, text="Очистить", command=self._clear_general, height=32, width=110, corner_radius=10
+            options_row, text="Очистить", command=self._clear_general, height=32, width=110, corner_radius=20
         )
         self._reg(self.clear_general_btn, "danger_button")
         self.clear_general_btn.grid(row=0, column=2, sticky="e")
@@ -496,7 +496,7 @@ class App(ctk.CTk):
         action_bar.grid_columnconfigure(2, weight=1)
 
         self.build_btn = ctk.CTkButton(
-            action_bar, text="Собрать EXE", command=self._start_build, height=36, width=140, corner_radius=10
+            action_bar, text="Собрать EXE", command=self._start_build, height=36, width=140, corner_radius=20
         )
         self._reg(self.build_btn, "accent_button")
         self.build_btn.grid(row=0, column=0)
@@ -508,7 +508,7 @@ class App(ctk.CTk):
             height=36,
             width=100,
             state="disabled",
-            corner_radius=10,
+            corner_radius=20,
         )
         self._reg(self.cancel_btn, "danger_button")
         self.cancel_btn.grid(row=0, column=1, padx=(8, 0))
@@ -543,7 +543,7 @@ class App(ctk.CTk):
             command=self._toggle_log,
             width=28,
             height=24,
-            corner_radius=10,
+            corner_radius=20,
             fg_color="transparent",
         )
         self._reg(self.log_toggle_btn, "log_toggle")
