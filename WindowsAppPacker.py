@@ -16,7 +16,7 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass
-from tkinter import filedialog, messagebox
+from tkinter import filedialog
 from typing import Callable, List, Optional, Tuple
 
 import customtkinter as ctk
@@ -296,6 +296,63 @@ class LogConsole(ctk.CTkTextbox):
         self.configure(state="normal")
         self.delete("1.0", "end")
         self.configure(state="disabled")
+
+
+class MessageDialog(ctk.CTkToplevel):
+    """Themed replacement for tkinter.messagebox — the native dialog ignores
+    the app's dark/light palette entirely (it's an OS-drawn window)."""
+
+    def __init__(self, master: ctk.CTk, colors: dict, title: str, message: str, kind: str = "error"):
+        super().__init__(master)
+        self.title(title)
+        self.resizable(False, False)
+        self.configure(fg_color=colors["bg"])
+        self.transient(master)
+
+        badge_color = colors["danger"] if kind == "error" else colors["accent"]
+        symbol = "✕" if kind == "error" else "i"
+
+        content = ctk.CTkFrame(self, fg_color=colors["card"], corner_radius=16, border_width=1, border_color=colors["border"])
+        content.grid(row=0, column=0, padx=16, pady=16)
+        content.grid_columnconfigure(0, weight=1)
+
+        badge = ctk.CTkLabel(
+            content,
+            text=symbol,
+            width=48,
+            height=48,
+            corner_radius=24,
+            fg_color=badge_color,
+            text_color="#ffffff",
+            font=ctk.CTkFont(size=20, weight="bold"),
+        )
+        badge.grid(row=0, column=0, padx=24, pady=(24, 12))
+
+        msg_label = ctk.CTkLabel(
+            content, text=message, text_color=colors["text"], wraplength=260, justify="center"
+        )
+        msg_label.grid(row=1, column=0, padx=24, pady=(0, 20))
+
+        ok_btn = ctk.CTkButton(
+            content,
+            text="OK",
+            command=self.destroy,
+            width=110,
+            height=32,
+            corner_radius=20,
+            fg_color=colors["accent"],
+            hover_color=colors["accent_hover"],
+            text_color=colors["accent_text"],
+        )
+        ok_btn.grid(row=2, column=0, pady=(0, 24))
+
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_width()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{x}+{y}")
+
+        self.grab_set()
+        self.wait_window()
 
 
 # --------------------------------------------------------------------------
@@ -617,7 +674,7 @@ class App(ctk.CTk):
         cfg = self._collect_config()
         errors = cfg.validate()
         if errors:
-            messagebox.showerror("Проверьте настройки", "\n".join(errors))
+            MessageDialog(self, self.colors, "Проверьте настройки", "\n".join(errors))
             return
 
         self.log_console.clear()
