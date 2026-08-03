@@ -125,6 +125,30 @@ def _python_has_pyinstaller(python_cmd: List[str]) -> bool:
         return False
 
 
+def _missing_build_tools() -> List[Tuple[str, str]]:
+    """Returns (description, install command) pairs for anything required to
+    run a build that isn't available — only relevant once WindowsAppPacker
+    itself is frozen, since sys.executable can't be used directly then."""
+    if not getattr(sys, "frozen", False):
+        return []
+
+    python_cmd = _find_system_python()
+    if python_cmd is None:
+        return [(
+            "Python не найден на этом компьютере.",
+            "winget install -e --id Python.Python.3.12",
+        )]
+
+    if not _python_has_pyinstaller(python_cmd):
+        quoted = " ".join(shlex.quote(part) for part in python_cmd)
+        return [(
+            "PyInstaller не установлен для найденного Python.",
+            f"{quoted} -m pip install pyinstaller",
+        )]
+
+    return []
+
+
 @dataclass
 class BuildConfig:
     script_path: str = ""
@@ -136,24 +160,6 @@ class BuildConfig:
     admin_rights: bool = False
 
     def validate(self) -> List[str]:
-        if getattr(sys, "frozen", False):
-            # A packaged WindowsAppPacker.exe has no real Python interpreter
-            # behind it — sys.executable then points at the EXE itself, so
-            # build_command() must be given a separately located system
-            # Python instead, or it would try to re-launch WindowsAppPacker
-            # as if it were "python -m PyInstaller ...".
-            python_cmd = _find_system_python()
-            if python_cmd is None:
-                return [
-                    "Python не найден на этом компьютере — для сборки нужен "
-                    "установленный Python с PyInstaller."
-                ]
-            if not _python_has_pyinstaller(python_cmd):
-                return [
-                    "PyInstaller не установлен для найденного Python. Выполните: "
-                    + " ".join(python_cmd) + " -m pip install pyinstaller"
-                ]
-
         errors = []
         if not self.script_path:
             errors.append("Не выбран исходный .py файл")
@@ -399,6 +405,116 @@ class MessageDialog(ctk.CTkToplevel):
 
         self.grab_set()
         self.wait_window()
+
+
+class MissingDependenciesDialog(ctk.CTkToplevel):
+    """Shown instead of MessageDialog when the build can't run at all
+    because Python and/or PyInstaller aren't available (packaged EXE with
+    no usable system Python) — lists what's missing with a ready-to-run,
+    copyable install command for each, rather than one plain sentence."""
+
+    def __init__(self, master: ctk.CTk, colors: dict, missing: List[Tuple[str, str]], on_retry: Callable[[], None]):
+        super().__init__(master)
+        self.title("Не хватает компонентов")
+        self.resizable(False, False)
+        self.configure(fg_color=colors["bg"])
+        self.transient(master)
+        _apply_window_icon(self, master._icon_images)
+
+        self._on_retry = on_retry
+
+        content = ctk.CTkFrame(self, fg_color=colors["card"], corner_radius=16, border_width=1, border_color=colors["border"])
+        content.grid(row=0, column=0, padx=16, pady=16)
+        content.grid_columnconfigure(0, weight=1)
+
+        row = 0
+        ctk.CTkLabel(
+            content,
+            text="Для сборки не хватает следующих компонентов:",
+            text_color=colors["text"],
+            wraplength=420,
+            justify="left",
+            anchor="w",
+        ).grid(row=row, column=0, sticky="w", padx=28, pady=(24, 12))
+        row += 1
+
+        for description, command in missing:
+            ctk.CTkLabel(
+                content, text=description, text_color=colors["muted"], anchor="w"
+            ).grid(row=row, column=0, sticky="w", padx=28, pady=(4, 4))
+            row += 1
+
+            cmd_row = ctk.CTkFrame(content, fg_color="transparent")
+            cmd_row.grid(row=row, column=0, sticky="ew", padx=28, pady=(0, 12))
+            cmd_row.grid_columnconfigure(0, weight=1)
+
+            ctk.CTkLabel(
+                cmd_row,
+                text=command,
+                font=ctk.CTkFont(family="Consolas", size=12),
+                fg_color=colors["input"],
+                text_color=colors["text"],
+                corner_radius=8,
+                anchor="w",
+                justify="left",
+                wraplength=320,
+            ).grid(row=0, column=0, sticky="ew", padx=(0, 8), ipady=6, ipadx=10)
+
+            ctk.CTkButton(
+                cmd_row,
+                text="Копировать",
+                width=100,
+                height=28,
+                corner_radius=20,
+                fg_color=colors["accent"],
+                hover_color=colors["accent_hover"],
+                text_color=colors["accent_text"],
+                command=lambda c=command: self._copy(c),
+            ).grid(row=0, column=1)
+            row += 1
+
+        btn_row = ctk.CTkFrame(content, fg_color="transparent")
+        btn_row.grid(row=row, column=0, pady=(8, 24))
+
+        ctk.CTkButton(
+            btn_row,
+            text="Закрыть",
+            command=self.destroy,
+            width=110,
+            height=32,
+            corner_radius=20,
+            fg_color=colors["input"],
+            hover_color=colors["border"],
+            text_color=colors["text"],
+        ).grid(row=0, column=0, padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_row,
+            text="Попробовать снова",
+            command=self._retry,
+            width=170,
+            height=32,
+            corner_radius=20,
+            fg_color=colors["accent"],
+            hover_color=colors["accent_hover"],
+            text_color=colors["accent_text"],
+        ).grid(row=0, column=1)
+
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_width()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{x}+{y}")
+
+        self.grab_set()
+        self.wait_window()
+
+    def _copy(self, text: str) -> None:
+        self.clipboard_clear()
+        self.clipboard_append(text)
+
+    def _retry(self) -> None:
+        self.destroy()
+        self._on_retry()
 
 
 # --------------------------------------------------------------------------
@@ -1493,17 +1609,8 @@ class App(ctk.CTk):
 
     def _check_pyinstaller(self) -> None:
         if getattr(sys, "frozen", False):
-            python_cmd = _find_system_python()
-            if python_cmd is None:
-                self.log_console.write(
-                    "[внимание] Python не найден на этом компьютере — сборка недоступна. "
-                    "Установите Python и PyInstaller (pip install pyinstaller).\n"
-                )
-            elif not _python_has_pyinstaller(python_cmd):
-                self.log_console.write(
-                    "[внимание] PyInstaller не установлен для найденного Python. Выполните: "
-                    + " ".join(python_cmd) + " -m pip install pyinstaller\n"
-                )
+            for description, command in _missing_build_tools():
+                self.log_console.write(f"[внимание] {description} Выполните: {command}\n")
             return
         try:
             import PyInstaller  # noqa: F401
@@ -1543,6 +1650,11 @@ class App(ctk.CTk):
     # -------------------------------------------------------------- build
 
     def _start_build(self) -> None:
+        missing = _missing_build_tools()
+        if missing:
+            MissingDependenciesDialog(self, self.colors, missing, on_retry=self._start_build)
+            return
+
         cfg = self._collect_config()
         errors = cfg.validate()
         if errors:
