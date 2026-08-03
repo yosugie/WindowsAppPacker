@@ -134,9 +134,16 @@ def _missing_build_tools() -> List[Tuple[str, str]]:
 
     python_cmd = _find_system_python()
     if python_cmd is None:
+        # winget depends on the Microsoft Store / App Installer being
+        # present, which isn't guaranteed on every Windows machine (older
+        # builds, locked-down corporate images). curl has shipped with
+        # Windows since 2018, so downloading the official installer
+        # directly from python.org and running it silently works
+        # everywhere curl does, with no extra components required.
         return [(
             "Python не найден на этом компьютере.",
-            "winget install -e --id Python.Python.3.12",
+            "curl -L -o py_setup.exe https://www.python.org/ftp/python/3.12.4/python-3.12.4-amd64.exe "
+            "&& py_setup.exe /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1 && del py_setup.exe",
         )]
 
     if not _python_has_pyinstaller(python_cmd):
@@ -511,6 +518,10 @@ class MissingDependenciesDialog(ctk.CTkToplevel):
     def _copy(self, text: str) -> None:
         self.clipboard_clear()
         self.clipboard_append(text)
+        # Tk's clipboard uses delayed rendering — without this, Windows can
+        # end up serving stale or empty clipboard content to another app
+        # (like cmd) once this window loses focus or closes.
+        self.update()
 
     def _retry(self) -> None:
         self.destroy()
