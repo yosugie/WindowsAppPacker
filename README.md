@@ -42,6 +42,7 @@ python WindowsAppPacker.py
 ## Примечания
 
 - Приложение вызывает PyInstaller через `python -m PyInstaller`, поэтому PyInstaller должен быть установлен в том же окружении Python, что и WindowsAppPacker.
+- Собранный `WindowsAppPacker.exe` не может сам собирать другие EXE — для сборки нужно запускать `WindowsAppPacker.py` напрямую через Python с установленным PyInstaller.
 
 ## Структура проекта
 

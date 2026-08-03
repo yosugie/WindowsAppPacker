@@ -103,6 +103,18 @@ class BuildConfig:
     admin_rights: bool = False
 
     def validate(self) -> List[str]:
+        if getattr(sys, "frozen", False):
+            # A packaged WindowsAppPacker.exe has no real Python interpreter
+            # behind it — sys.executable then points at the EXE itself, so
+            # build_command() would try to re-launch WindowsAppPacker as if
+            # it were "python -m PyInstaller ...", which just opens another
+            # copy of this same app instead of building anything.
+            return [
+                "Собранный EXE-файл WindowsAppPacker не может сам запускать "
+                "сборку — для этого нужен Python с установленным PyInstaller. "
+                "Запустите WindowsAppPacker.py через python вместо EXE."
+            ]
+
         errors = []
         if not self.script_path:
             errors.append("Не выбран исходный .py файл")
@@ -1437,6 +1449,12 @@ class App(ctk.CTk):
     # ------------------------------------------------------------- helpers
 
     def _check_pyinstaller(self) -> None:
+        if getattr(sys, "frozen", False):
+            self.log_console.write(
+                "[внимание] Это собранный EXE — сборка недоступна, нужен Python "
+                "с установленным PyInstaller. Запустите WindowsAppPacker.py через python.\n"
+            )
+            return
         try:
             import PyInstaller  # noqa: F401
         except ImportError:
