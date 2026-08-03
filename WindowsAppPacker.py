@@ -13,6 +13,7 @@ import base64
 import os
 import queue
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -92,6 +93,38 @@ THEMES = {
 # --------------------------------------------------------------------------
 
 
+def _find_system_python() -> Optional[List[str]]:
+    """Finds a real Python interpreter on PATH — needed only once
+    WindowsAppPacker itself is frozen, since sys.executable then points at
+    the packaged EXE instead of an actual Python installation."""
+    candidates: List[List[str]] = []
+    if sys.platform.startswith("win"):
+        py_launcher = shutil.which("py")
+        if py_launcher:
+            candidates.append([py_launcher, "-3"])
+    for name in ("python3", "python"):
+        path = shutil.which(name)
+        if path:
+            candidates.append([path])
+
+    for candidate in candidates:
+        try:
+            result = subprocess.run(candidate + ["--version"], capture_output=True, timeout=5)
+            if result.returncode == 0:
+                return candidate
+        except Exception:
+            continue
+    return None
+
+
+def _python_has_pyinstaller(python_cmd: List[str]) -> bool:
+    try:
+        result = subprocess.run(python_cmd + ["-c", "import PyInstaller"], capture_output=True, timeout=10)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 @dataclass
 class BuildConfig:
     script_path: str = ""
@@ -106,14 +139,20 @@ class BuildConfig:
         if getattr(sys, "frozen", False):
             # A packaged WindowsAppPacker.exe has no real Python interpreter
             # behind it — sys.executable then points at the EXE itself, so
-            # build_command() would try to re-launch WindowsAppPacker as if
-            # it were "python -m PyInstaller ...", which just opens another
-            # copy of this same app instead of building anything.
-            return [
-                "Собранный EXE-файл WindowsAppPacker не может сам запускать "
-                "сборку — для этого нужен Python с установленным PyInstaller. "
-                "Запустите WindowsAppPacker.py через python вместо EXE."
-            ]
+            # build_command() must be given a separately located system
+            # Python instead, or it would try to re-launch WindowsAppPacker
+            # as if it were "python -m PyInstaller ...".
+            python_cmd = _find_system_python()
+            if python_cmd is None:
+                return [
+                    "Python не найден на этом компьютере — для сборки нужен "
+                    "установленный Python с PyInstaller."
+                ]
+            if not _python_has_pyinstaller(python_cmd):
+                return [
+                    "PyInstaller не установлен для найденного Python. Выполните: "
+                    + " ".join(python_cmd) + " -m pip install pyinstaller"
+                ]
 
         errors = []
         if not self.script_path:
@@ -131,8 +170,9 @@ class BuildConfig:
 # --------------------------------------------------------------------------
 
 
-def build_command(cfg: BuildConfig) -> List[str]:
-    cmd = [sys.executable, "-m", "PyInstaller", cfg.script_path, "--noconfirm", "--onefile"]
+def build_command(cfg: BuildConfig, python_cmd: Optional[List[str]] = None) -> List[str]:
+    cmd = list(python_cmd) if python_cmd else [sys.executable]
+    cmd += ["-m", "PyInstaller", cfg.script_path, "--noconfirm", "--onefile"]
 
     cmd.append("--noconsole" if cfg.hide_console else "--console")
 
@@ -170,7 +210,10 @@ class BuildJob:
 
     def _run(self) -> None:
         try:
-            cmd = build_command(self.cfg)
+            python_cmd = _find_system_python() if getattr(sys, "frozen", False) else None
+            if getattr(sys, "frozen", False) and python_cmd is None:
+                raise RuntimeError("Python не найден на этом компьютере.")
+            cmd = build_command(self.cfg, python_cmd)
             self.on_output("$ " + " ".join(shlex.quote(part) for part in cmd) + "\n")
 
             self._process = subprocess.Popen(
@@ -1450,10 +1493,17 @@ class App(ctk.CTk):
 
     def _check_pyinstaller(self) -> None:
         if getattr(sys, "frozen", False):
-            self.log_console.write(
-                "[внимание] Это собранный EXE — сборка недоступна, нужен Python "
-                "с установленным PyInstaller. Запустите WindowsAppPacker.py через python.\n"
-            )
+            python_cmd = _find_system_python()
+            if python_cmd is None:
+                self.log_console.write(
+                    "[внимание] Python не найден на этом компьютере — сборка недоступна. "
+                    "Установите Python и PyInstaller (pip install pyinstaller).\n"
+                )
+            elif not _python_has_pyinstaller(python_cmd):
+                self.log_console.write(
+                    "[внимание] PyInstaller не установлен для найденного Python. Выполните: "
+                    + " ".join(python_cmd) + " -m pip install pyinstaller\n"
+                )
             return
         try:
             import PyInstaller  # noqa: F401
