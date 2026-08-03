@@ -113,18 +113,24 @@ WindowsAppPacker даёт для этого GUI: выбрал скрипт, ик
   `PhotoImage` держатся в `self._icon_images`: без этого Python собрал
   бы их мусором сразу после выхода из `__init__()`, и значок пропал бы.
 - `.ico`-копия значка нужна отдельно от PNG из-за особенности
-  CustomTkinter на Windows: `CTk.__init__()` сам планирует
+  CustomTkinter на Windows: и `CTk`, и `CTkToplevel` сами планируют
   `self.after(200, self._windows_set_titlebar_icon)`, который меняет
   иконку окна на дефолтный логотип CustomTkinter, если к этому моменту
   не был вызван `iconbitmap()`/`wm_iconbitmap()` (это отслеживается
   флагом `_iconbitmap_method_called`) — а `iconphoto()` этот флаг не
-  трогает. Поэтому в `App.__init__()` на Windows (`sys.platform.
-  startswith("win")`) `_ICON_ICO` дополнительно распаковывается во
-  временный файл (`tempfile.gettempdir()`) и передаётся в
-  `self.iconbitmap()` — синхронно, до срабатывания таймера
-  CustomTkinter, так что флаг успевает выставиться и наша иконка не
-  перезатирается. На Linux/macOS этот блок не выполняется — там
-  `iconphoto()` со своей задачей справляется сам.
+  трогает. Поэтому в общем хелпере `_apply_window_icon()` на Windows
+  (`sys.platform.startswith("win")`) `_ICON_ICO` дополнительно
+  распаковывается во временный файл (`tempfile.gettempdir()`, путь
+  кешируется в `_icon_ico_path`, чтобы не писать файл заново на каждое
+  окно) и передаётся в `window.iconbitmap()` — синхронно, до
+  срабатывания таймера CustomTkinter, так что флаг успевает выставиться
+  и иконка не перезатирается. На Linux/macOS этот блок не выполняется —
+  там `iconphoto()` со своей задачей справляется сам.
+  У каждого top-level окна своё собственное состояние иконки в Tk — оно
+  не наследуется автоматически от главного окна, поэтому `_apply_window_
+  icon()` вызывается отдельно и в `App.__init__()`, и в
+  `MessageDialog.__init__()` (иначе у диалога ошибки в заголовке
+  оставался дефолтный логотип CustomTkinter, а не наша иконка).
 - Синий акцент (`THEMES["dark"]["accent"]` = `#0b63f6`, hover — `#3c82f8`)
   на всех кнопках — взято из CSS-примера кнопки, который принёс
   пользователь. CustomTkinter не поддерживает CSS `box-shadow` (двойное

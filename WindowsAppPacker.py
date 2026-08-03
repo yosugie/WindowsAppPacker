@@ -310,6 +310,10 @@ class MessageDialog(ctk.CTkToplevel):
         self.resizable(False, False)
         self.configure(fg_color=colors["bg"])
         self.transient(master)
+        # Every top-level window (this dialog included) has its own icon
+        # state in Tk — inheriting the main window's icon isn't automatic,
+        # so it has to be set here too, reusing master's PhotoImages.
+        _apply_window_icon(self, master._icon_images)
 
         content = ctk.CTkFrame(self, fg_color=colors["card"], corner_radius=16, border_width=1, border_color=colors["border"])
         content.grid(row=0, column=0, padx=16, pady=16)
@@ -1130,6 +1134,27 @@ _ICON_ICO = base64.b64decode(
     "RU5ErkJggg=="
 )
 
+_icon_ico_path: Optional[str] = None
+
+
+def _apply_window_icon(window, icon_images: List[PhotoImage]) -> None:
+    """Sets the app icon on a Tk window (App's own window or a CTkToplevel
+    dialog) — each top-level window has its own icon state in Tk, so this
+    has to be called per-window, not just once on the main App."""
+    window.iconphoto(True, *icon_images)
+    if sys.platform.startswith("win"):
+        # CustomTkinter schedules its own default titlebar icon 200ms after
+        # a window is created (CTk and CTkToplevel both do this) unless
+        # iconbitmap() was already called by then — iconphoto() alone
+        # doesn't trip that flag. Write the .ico out once and reuse the
+        # path for every window instead of writing it again each time.
+        global _icon_ico_path
+        if _icon_ico_path is None:
+            _icon_ico_path = os.path.join(tempfile.gettempdir(), "windowsapppacker_icon.ico")
+            with open(_icon_ico_path, "wb") as f:
+                f.write(_ICON_ICO)
+        window.iconbitmap(_icon_ico_path)
+
 
 WINDOW_WIDTH = 1000
 LABEL_WIDTH = 110  # fits the longest label ("Автор/компания:") with little slack
@@ -1147,20 +1172,7 @@ class App(ctk.CTk):
             PhotoImage(data=_ICON_PNG_64),
             PhotoImage(data=_ICON_PNG_32),
         ]
-        self.iconphoto(True, *self._icon_images)
-
-        if sys.platform.startswith("win"):
-            # iconphoto() alone isn't enough here: CustomTkinter's own
-            # __init__ (already run via super().__init__() above) schedules
-            # self.after(200, self._windows_set_titlebar_icon), which
-            # replaces the window icon with CustomTkinter's own logo unless
-            # iconbitmap() was already called by then. Calling it here,
-            # synchronously and well before that 200ms fires, is what
-            # actually keeps our icon on screen.
-            icon_path = os.path.join(tempfile.gettempdir(), "windowsapppacker_icon.ico")
-            with open(icon_path, "wb") as f:
-                f.write(_ICON_ICO)
-            self.iconbitmap(icon_path)
+        _apply_window_icon(self, self._icon_images)
 
         self.theme = "dark"
         self.colors = THEMES[self.theme]
